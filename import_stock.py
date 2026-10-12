@@ -137,6 +137,38 @@ def print_plan(parts, entries):
           f"{len(entries)} позиций склада, {sum(e['qty'] for e in entries):g} единиц.")
 
 
+# Какие права группы пользователя нужны (Админка → Группы → правила).
+# Производители (Company) и их модели в InvenTree относятся к правилу Purchase Order.
+REQUIRED_ROLES = {
+    "part_category": ["view"],
+    "part": ["view", "add", "change"],
+    "stock_location": ["view"],
+    "stock": ["view", "add"],
+    "purchase_order": ["view", "add"],
+}
+
+
+def check_roles(client):
+    """Проверяет права пользователя до любых изменений."""
+    info = client.request("GET", "/api/user/roles/")
+    if info.get("is_superuser"):
+        return
+    roles = info.get("roles") or {}
+    missing = [
+        f"{role}: {perm}"
+        for role, perms in REQUIRED_ROLES.items()
+        for perm in perms
+        if perm not in (roles.get(role) or [])
+    ]
+    if missing:
+        sys.exit(
+            f"У пользователя {info.get('username', '')} не хватает прав:\n  "
+            + "\n  ".join(missing)
+            + "\n\nДобавьте их группе пользователя: Админка → Группы → правила (Rule sets)."
+            "\nПроизводители в InvenTree относятся к правилу Purchase Order."
+        )
+
+
 class Importer:
     def __init__(self, client, status):
         self.c = client
@@ -145,6 +177,9 @@ class Importer:
         self.locations = client.tree(LOCATION_API)
         self.parts = {p["name"]: p for p in client.get_all(PART_API)}
         self.companies = {c["name"].casefold(): c["pk"] for c in client.get_all(COMPANY_API)}
+        # Все привязки к моделям одним запросом: фильтр ?part= отвергает
+        # детали без флага «Покупная» ответом 400
+        self.mpns = {(m["part"], m["manufacturer"], m["MPN"]) for m in client.get_all(MPN_API)}
         self.stats = dict.fromkeys(["companies", "parts", "mpn", "stock", "stock_skipped"], 0)
 
     def manufacturer(self, name):
@@ -162,6 +197,10 @@ class Importer:
         existing = self.parts.get(spec["name"])
         if existing:
             pk = existing["pk"]
+            if spec["model"] and not existing.get("purchaseable"):
+                # Модель производителя (MPN) можно привязать только к покупной детали
+                self.c.request("PATCH", f"{PART_API}{pk}/", {"purchaseable": True})
+                existing["purchaseable"] = True
         else:
             category = resolve_path(self.categories, spec["category"])
             if category is None:
@@ -172,6 +211,7 @@ class Importer:
                 "description": spec["name"],
                 "category": category,
                 "trackable": spec["trackable"],
+                "purchaseable": True,
                 "active": True,
             })
             pk = res["pk"]
@@ -181,9 +221,9 @@ class Importer:
 
         if spec["manufacturer"] and spec["model"]:
             mfr = self.manufacturer(spec["manufacturer"])
-            mpns = self.c.get_all(MPN_API, part=pk)
-            if not any(m["manufacturer"] == mfr and m["MPN"] == spec["model"] for m in mpns):
+            if (pk, mfr, spec["model"]) not in self.mpns:
                 self.c.post(MPN_API, {"part": pk, "manufacturer": mfr, "MPN": spec["model"]})
+                self.mpns.add((pk, mfr, spec["model"]))
                 self.stats["mpn"] += 1
         elif spec["manufacturer"]:
             self.manufacturer(spec["manufacturer"])
@@ -231,7 +271,9 @@ def main():
         print("\nРежим проверки: на сервер ничего не отправлялось.")
         return
 
-    importer = Importer(connect(args, ap), STATUS[args.status])
+    client = connect(args, ap)
+    check_roles(client)
+    importer = Importer(client, STATUS[args.status])
     part_pks = {name: importer.part(spec) for name, spec in parts.items()}
     for e in entries:
         importer.stock(e, part_pks[e["part"]])
