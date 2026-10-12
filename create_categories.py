@@ -3,22 +3,19 @@
 Создание категорий деталей в InvenTree через API.
 
   1. Проверка без изменений:
-       python create_categories.py --url https://p2ptd-inventory.online --dry-run
+       python create_categories.py --dry-run
 
-  2. Реальное создание (пароль спросит скрипт):
-       python create_categories.py --url https://p2ptd-inventory.online --user ваш_логин
+  2. Реальное создание:
+       python create_categories.py
 
-Вместо логина и пароля можно передать токен: --token inv-xxxx
+Адрес и токен берутся из файла .env (см. .env.example).
+Их можно передать и аргументами: --url https://... --token inv-xxxx
+Без токена можно войти логином: --user admin (пароль спросит скрипт).
+
 Скрипт можно запускать повторно: существующие категории пропускаются.
 """
 
-import argparse
-import base64
-import getpass
-import json
-import sys
-import urllib.error
-import urllib.request
+from inventree_client import base_parser, connect
 
 # Дерево категорий. Словарь = есть вложенные категории, список = конечные категории,
 # пустой список = категория без вложенных.
@@ -37,6 +34,7 @@ CATEGORIES = {
     "Свет": {
         "Световые приборы": ["PAR", "WASH", "LEDBAR"],
         "Контроллеры": [],
+        "Дым и эффекты": [],
     },
     "Видео": {
         "Проекторы": [],
@@ -76,48 +74,8 @@ def walk(tree, path=()):
         yield from walk(sub, path + (name,))
 
 
-class Client:
-    def __init__(self, base_url, token=None, user=None, password=None):
-        self.base = base_url.rstrip("/")
-        if token:
-            self.auth = "Token " + token
-        else:
-            raw = f"{user}:{password}".encode("utf-8")
-            self.auth = "Basic " + base64.b64encode(raw).decode("ascii")
-
-    def request(self, method, path, payload=None):
-        data = None
-        headers = {"Authorization": self.auth, "Accept": "application/json"}
-        if payload is not None:
-            data = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(self.base + path, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                body = resp.read().decode("utf-8")
-                return json.loads(body) if body else None
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", errors="replace")[:500]
-            sys.exit(f"Ошибка API {e.code} на {method} {path}: {detail}")
-        except urllib.error.URLError as e:
-            sys.exit(f"Не удалось подключиться к {self.base}: {e.reason}")
-
-    def existing(self):
-        """Существующие категории: {(parent_id, name): id}"""
-        result = self.request("GET", API)
-        items = result["results"] if isinstance(result, dict) else result
-        return {(i.get("parent"), i["name"]): i["pk"] for i in items}
-
-    def create(self, name, parent):
-        return self.request("POST", API, {"name": name, "parent": parent})["pk"]
-
-
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--url", required=True)
-    ap.add_argument("--user")
-    ap.add_argument("--token")
-    ap.add_argument("--dry-run", action="store_true", help="только показать дерево")
+    ap = base_parser(__doc__)
     args = ap.parse_args()
 
     entries = list(walk(CATEGORIES))
@@ -129,12 +87,8 @@ def main():
         print("\nРежим проверки: на сервер ничего не отправлялось.")
         return
 
-    if not args.token and not args.user:
-        ap.error("укажите --user или --token")
-    password = None if args.token else getpass.getpass("Пароль: ")
-    client = Client(args.url, token=args.token, user=args.user, password=password)
-
-    existing = client.existing()
+    client = connect(args, ap)
+    existing = client.tree(API)
     ids = {(): None}
     created = skipped = 0
 
@@ -147,7 +101,7 @@ def main():
             skipped += 1
             print(f"= уже есть: {label}")
         else:
-            pk = client.create(name, parent_id)
+            pk = client.post(API, {"name": name, "parent": parent_id})["pk"]
             existing[key] = pk
             ids[path + (name,)] = pk
             created += 1

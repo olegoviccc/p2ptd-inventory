@@ -1,0 +1,83 @@
+# Дорожка: из райдера TECH_RIDER_DOROZHKA_RU.docx (24.09.2026)
+# Формат позиций описан в rovesnik.yaml.
+
+venue: Дорожка
+source: TECH_RIDER_DOROZHKA_RU.docx
+
+items:
+  - name: Yamaha MG12XU
+    manufacturer: Yamaha
+    model: MG12XU
+    category: Звук / Микшерные пульты / Аналоговые
+    qty: 1
+    location: Зал
+    check: место (Зал или Рэк)
+
+  - name: Yamaha HS8
+    manufacturer: Yamaha
+    model: HS8
+    category: Звук / Акустические системы / Активные
+    qty: 2
+    location: Зал
+    note: мониторы
+
+  - name: Turbosound Milan M10
+    manufacturer: Turbosound
+    model: Milan M10
+    category: Звук / Акустические системы / Активные
+    qty: 2
+    location: Склад
+    note: выдаются по предварительному запросу
+
+  - name: Pioneer DJ DJM-750MK2
+    manufacturer: Pioneer DJ
+    model: DJM-750MK2
+    category: DJ-оборудование / Микшеры
+    qty: 1
+    location: Зал
+
+  - name: Pioneer DJ XDJ-1000MK2
+    manufacturer: Pioneer DJ
+    model: XDJ-1000MK2
+    category: DJ-оборудование / Проигрыватели
+    qty: 1
+    location: Зал
+
+  - name: Behringer ULM300MIC
+    manufacturer: Behringer
+    model: ULM300MIC
+    category: Звук / Микрофоны / Радиосистемы
+    qty: 2
+    location: Зал
+    note: комплект = 1 приёмник + 1 ручной микрофон
+    check: в райдере «2 шт.», проверить что это 2 комплекта
+
+  - name: Arthur Forty U-9300C
+    manufacturer: Arthur Forty
+    model: U-9300C
+    category: Звук / Микрофоны / Радиосистемы
+    qty: 1
+    location: Зал
+    note: комплект = 1 приёмник + 2 ручных микрофона
+
+  - name: LED Par
+    category: Свет / Световые приборы / PAR
+    qty: 2
+    location: Зал
+
+  - name: LED Bar
+    category: Свет / Световые приборы / LEDBAR
+    qty: 8
+    location: Зал
+
+  - name: Экран 120"
+    category: Видео / Экраны
+    qty: 2
+    location: Зал
+
+  - name: Epson EB-U05
+    manufacturer: Epson
+    model: EB-U05
+    category: Видео / Проекторы
+    qty: 2
+    location: Зал
