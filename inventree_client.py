@@ -23,16 +23,41 @@ from pathlib import Path
 ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 
-def load_env(path=ENV_FILE):
+def find_env_file():
+    """.env рядом со скриптами. Windows часто сохраняет его как .env.txt."""
+    for path in (ENV_FILE, ENV_FILE.with_name(".env.txt")):
+        if path.exists():
+            return path
+    return None
+
+
+def load_env():
     """Читает KEY=VALUE из .env в os.environ (не перезаписывая уже заданное)."""
-    if not path.exists():
+    path = find_env_file()
+    if not path:
         return
-    for line in path.read_text(encoding="utf-8").splitlines():
+    # utf-8-sig: Блокнот Windows ставит в начало файла невидимый BOM
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
+        if line.startswith("export "):
+            line = line[len("export "):]
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def env_hint():
+    """Пояснение, почему адрес или токен не нашлись в .env."""
+    path = find_env_file()
+    if not path:
+        return f"файл {ENV_FILE} не найден (он должен лежать рядом со скриптами)"
+    keys = [
+        line.split("=", 1)[0].strip()
+        for line in path.read_text(encoding="utf-8-sig").splitlines()
+        if "=" in line and not line.strip().startswith("#")
+    ]
+    return f"в файле {path} найдены ключи: {', '.join(keys) or 'никаких'}"
 
 
 def add_connection_args(ap):
@@ -47,11 +72,11 @@ def connect(args, ap):
     url = args.url or os.environ.get("INVENTREE_URL")
     token = args.token or os.environ.get("INVENTREE_TOKEN")
     if not url:
-        ap.error("не задан адрес: укажите --url или INVENTREE_URL в .env")
+        ap.error("не задан адрес: укажите --url или INVENTREE_URL в .env; " + env_hint())
     if token:
         return Client(url, token=token)
     if not args.user:
-        ap.error("нет токена: укажите INVENTREE_TOKEN в .env, --token или --user")
+        ap.error("нет токена: укажите INVENTREE_TOKEN в .env, --token или --user; " + env_hint())
     return Client(url, user=args.user, password=getpass.getpass("Пароль: "))
 
 
