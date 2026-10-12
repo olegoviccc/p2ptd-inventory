@@ -137,6 +137,38 @@ def print_plan(parts, entries):
           f"{len(entries)} позиций склада, {sum(e['qty'] for e in entries):g} единиц.")
 
 
+# Какие права группы пользователя нужны (Админка → Группы → правила).
+# Производители (Company) и их модели в InvenTree относятся к правилу Purchase Order.
+REQUIRED_ROLES = {
+    "part_category": ["view"],
+    "part": ["view", "add"],
+    "stock_location": ["view"],
+    "stock": ["view", "add"],
+    "purchase_order": ["view", "add"],
+}
+
+
+def check_roles(client):
+    """Проверяет права пользователя до любых изменений."""
+    info = client.request("GET", "/api/user/roles/")
+    if info.get("is_superuser"):
+        return
+    roles = info.get("roles") or {}
+    missing = [
+        f"{role}: {perm}"
+        for role, perms in REQUIRED_ROLES.items()
+        for perm in perms
+        if perm not in (roles.get(role) or [])
+    ]
+    if missing:
+        sys.exit(
+            f"У пользователя {info.get('username', '')} не хватает прав:\n  "
+            + "\n  ".join(missing)
+            + "\n\nДобавьте их группе пользователя: Админка → Группы → правила (Rule sets)."
+            "\nПроизводители в InvenTree относятся к правилу Purchase Order."
+        )
+
+
 class Importer:
     def __init__(self, client, status):
         self.c = client
@@ -231,7 +263,9 @@ def main():
         print("\nРежим проверки: на сервер ничего не отправлялось.")
         return
 
-    importer = Importer(connect(args, ap), STATUS[args.status])
+    client = connect(args, ap)
+    check_roles(client)
+    importer = Importer(client, STATUS[args.status])
     part_pks = {name: importer.part(spec) for name, spec in parts.items()}
     for e in entries:
         importer.stock(e, part_pks[e["part"]])
