@@ -1,0 +1,54 @@
+# Пешка: из райдера TECH_RIDER_PESHKA.docx (24.09.2026)
+# Формат позиций описан в rovesnik.yaml.
+
+venue: Пешка
+source: TECH_RIDER_PESHKA.docx
+
+items:
+  - name: Turbosound Milan M10
+    manufacturer: Turbosound
+    model: Milan M10
+    category: Звук / Акустические системы / Активные
+    qty: 2
+    location: Бэк
+    note: выдаются по предварительному запросу
+
+  - name: Pioneer DJ DJM-750MK2
+    manufacturer: Pioneer DJ
+    model: DJM-750MK2
+    category: DJ-оборудование / Микшеры
+    qty: 1
+    location: Диджейка
+
+  - name: Pioneer DJ XDJ-1000MK2
+    manufacturer: Pioneer DJ
+    model: XDJ-1000MK2
+    category: DJ-оборудование / Проигрыватели
+    qty: 1
+    location: Диджейка
+
+  - name: Диджейский стол 150×50 см
+    category: Прочее
+    qty: 1
+    location: Диджейка
+    note: станок на ногах, высота 90 см
+
+  - name: Arthur Forty U-9300C
+    manufacturer: Arthur Forty
+    model: U-9300C
+    category: Звук / Микрофоны / Радиосистемы
+    qty: 1
+    location: Бэк
+    note: комплект = 1 приёмник + 2 ручных микрофона; выдаётся по предварительному запросу
+
+  - name: Экран 120"
+    category: Видео / Экраны
+    qty: 1
+    location: Большой зал
+
+  - name: Epson EB-U05
+    manufacturer: Epson
+    model: EB-U05
+    category: Видео / Проекторы
+    qty: 1
+    location: Большой зал

@@ -1,0 +1,186 @@
+# Ровесник: из райдера TECH_RIDER_ROVESNIK_07.09.2026.pdf
+#
+# Формат позиции:
+#   name          название детали в InvenTree («Производитель Модель» или как есть)
+#   manufacturer  производитель (пусто = без производителя)
+#   model         модель / артикул производителя (MPN)
+#   category      путь категории через « / »
+#   qty           количество в каждом месте
+#   location      место внутри заведения (пусто = само заведение)
+#   locations     список мест, если в каждом стоит одинаковое qty
+#   trackable     есть серийник (по умолчанию: да, если указан производитель)
+#   note          примечание к позиции склада
+#   check         что проверить при обходе (попадает в примечание)
+
+venue: Ровесник
+source: TECH_RIDER_ROVESNIK_07.09.2026.pdf
+
+items:
+  # --- Сцена (2 этаж): основной PA
+  - name: L-Acoustics ARCS WIDE
+    manufacturer: L-Acoustics
+    model: ARCS WIDE
+    category: Звук / Акустические системы / Пассивные
+    qty: 2
+    location: Сцена 2
+
+  - name: L-Acoustics SB18
+    manufacturer: L-Acoustics
+    model: SB18
+    category: Звук / Акустические системы / Пассивные
+    qty: 2
+    location: Сцена 2
+    note: сабвуфер
+
+  - name: L-Acoustics LA4
+    manufacturer: L-Acoustics
+    model: LA4
+    category: Звук / Усилители мощности
+    qty: 1
+    location: Сцена 2
+    note: усилитель-контроллер основного PA
+
+  - name: Behringer X32 Rack
+    manufacturer: Behringer
+    model: X32 Rack
+    category: Звук / Микшерные пульты / Цифровые
+    qty: 1
+    location: Сцена 2
+
+  - name: Behringer XENYX 1204
+    manufacturer: Behringer
+    model: XENYX 1204
+    category: Звук / Микшерные пульты / Аналоговые
+    qty: 1
+    location: Сцена 2
+    check: точная модель (1204 / 1204USB / 1204FX)
+
+  - name: Turbosound Milan M10
+    manufacturer: Turbosound
+    model: Milan M10
+    category: Звук / Акустические системы / Активные
+    qty: 4
+    location: Сцена 2
+
+  # --- DJ
+  - name: Pioneer DJ CDJ-3000
+    manufacturer: Pioneer DJ
+    model: CDJ-3000
+    category: DJ-оборудование / Проигрыватели
+    qty: 2
+    location: Сцена 2
+
+  - name: Pioneer DJ CDJ-2000
+    manufacturer: Pioneer DJ
+    model: CDJ-2000
+    category: DJ-оборудование / Проигрыватели
+    qty: 2
+    location: Сцена 2
+    check: в райдере «CDJ2000», уточнить NXS / NXS2
+
+  - name: Pioneer DJ DJM-900NXS2
+    manufacturer: Pioneer DJ
+    model: DJM-900NXS2
+    category: DJ-оборудование / Микшеры
+    qty: 1
+    location: Сцена 2
+
+  # --- Микрофоны и стойки
+  - name: Shure SM58S
+    manufacturer: Shure
+    model: SM58S
+    category: Звук / Микрофоны / Проводные
+    qty: 2
+    location: Сцена 2
+    note: SM58 с кнопкой
+
+  - name: Микрофонная стойка «журавль»
+    category: Сцена / Стойки и штативы / Микрофонные
+    qty: 2
+    location: Сцена 2
+
+  - name: Стойка под АС
+    category: Сцена / Стойки и штативы / Акустические
+    qty: 2
+    location: Сцена 2
+
+  # --- Трансляционный звук (100V). Зоны не заведены местами, они в примечании
+  - name: Усилитель Lab.Gruppen серии CA
+    manufacturer: Lab.Gruppen
+    category: Звук / Усилители мощности
+    qty: 1
+    note: трансляция 1 этажа
+    check: модель и количество в райдере не указаны
+
+  - name: Усилитель Audac
+    manufacturer: Audac
+    category: Звук / Усилители мощности
+    qty: 1
+    note: трансляция 2 этажа
+    check: модель и количество в райдере не указаны
+
+  - name: Audac ATEO6
+    manufacturer: Audac
+    model: ATEO6
+    category: Звук / Акустические системы / Трансляционные
+    qty: 9
+    note: "1 этаж: Сцена 1 — 3, Бар 1 — 2, Туалет 1 — 1, Вход — 1, Куб — 2"
+
+  - name: Audac WX502MK2
+    manufacturer: Audac
+    model: WX502MK2
+    category: Звук / Акустические системы / Трансляционные
+    qty: 14
+    note: "2 этаж: Лестница 2 — 1, Сцена 2 — 3, Бар 2 — 3, Туалет 2 — 3, Синяя — 2, Камин — 2"
+
+  # --- Свет
+  - name: LED Bar
+    category: Свет / Световые приборы / LEDBAR
+    qty: 7
+
+  - name: LED Wash
+    category: Свет / Световые приборы / WASH
+    qty: 4
+
+  - name: LED Par
+    category: Свет / Световые приборы / PAR
+    qty: 5
+
+  - name: ADJ Fog Fury 3000
+    manufacturer: ADJ
+    model: Fog Fury 3000
+    category: Свет / Дым и эффекты
+    qty: 1
+
+  - name: Involight FUME3000PRO
+    manufacturer: Involight
+    model: FUME3000PRO
+    category: Свет / Дым и эффекты
+    qty: 1
+
+  # --- Видео и IT
+  - name: BenQ TH671ST
+    manufacturer: BenQ
+    model: TH671ST
+    category: Видео / Проекторы
+    qty: 1
+    note: 2 этаж
+
+  - name: Epson H843B
+    manufacturer: Epson
+    model: H843B
+    category: Видео / Проекторы
+    qty: 1
+    note: 3 этаж
+    check: H843B — заводской код, записать коммерческое название модели с шильдика
+
+  - name: Экран 2870×1740 мм
+    category: Видео / Экраны
+    qty: 1
+    note: 2 этаж
+
+  - name: ПК Windows 11 (GTX 1650+)
+    category: IT и сеть / Компьютеры
+    qty: 2
+    trackable: true
+    check: конфигурацию и серийники записать при обходе

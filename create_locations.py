@@ -2,27 +2,20 @@
 """
 Создание мест хранения в InvenTree через API.
 
-Запуск (нужен только Python 3, ничего устанавливать не надо):
-
   1. Проверка без изменений:
-       python create_locations.py --url https://ваш-адрес --user admin --dry-run
+       python create_locations.py --dry-run
 
   2. Реальное создание:
-       python create_locations.py --url https://ваш-адрес --user admin
+       python create_locations.py
 
-Пароль спросит скрипт. Вместо логина/пароля можно передать токен:
-       python create_locations.py --url https://ваш-адрес --token inv-xxxx
+Адрес и токен берутся из файла .env (см. .env.example).
+Их можно передать и аргументами: --url https://... --token inv-xxxx
+Без токена можно войти логином: --user admin (пароль спросит скрипт).
 
 Скрипт можно запускать повторно: уже существующие места пропускаются.
 """
 
-import argparse
-import base64
-import getpass
-import json
-import sys
-import urllib.error
-import urllib.request
+from inventree_client import base_parser, connect
 
 # Верхний уровень: заведение -> список внутренних локаций
 LOCATIONS = {
@@ -45,51 +38,8 @@ LOCATIONS = {
 API = "/api/stock/location/"
 
 
-class Client:
-    def __init__(self, base_url, token=None, user=None, password=None):
-        self.base = base_url.rstrip("/")
-        if token:
-            self.auth = "Token " + token
-        else:
-            raw = f"{user}:{password}".encode("utf-8")
-            self.auth = "Basic " + base64.b64encode(raw).decode("ascii")
-
-    def request(self, method, path, payload=None):
-        data = None
-        headers = {"Authorization": self.auth, "Accept": "application/json"}
-        if payload is not None:
-            data = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(
-            self.base + path, data=data, headers=headers, method=method
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                body = resp.read().decode("utf-8")
-                return json.loads(body) if body else None
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", errors="replace")[:500]
-            sys.exit(f"Ошибка API {e.code} на {method} {path}: {detail}")
-        except urllib.error.URLError as e:
-            sys.exit(f"Не удалось подключиться к {self.base}: {e.reason}")
-
-    def existing(self):
-        """Все существующие места: {(parent_id, name): id}"""
-        result = self.request("GET", API)
-        items = result["results"] if isinstance(result, dict) else result
-        return {(i.get("parent"), i["name"]): i["pk"] for i in items}
-
-    def create(self, name, parent):
-        res = self.request("POST", API, {"name": name, "parent": parent})
-        return res["pk"]
-
-
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--url", required=True, help="адрес InvenTree, например https://inventree.example.com")
-    ap.add_argument("--user", help="логин администратора")
-    ap.add_argument("--token", help="API-токен (вместо логина и пароля)")
-    ap.add_argument("--dry-run", action="store_true", help="только показать, что будет создано")
+    ap = base_parser(__doc__)
     args = ap.parse_args()
 
     total = sum(1 + len(v) for v in LOCATIONS.values())
@@ -103,12 +53,8 @@ def main():
         print("\nРежим проверки: на сервер ничего не отправлялось.")
         return
 
-    if not args.token and not args.user:
-        ap.error("укажите --user или --token")
-    password = None if args.token else getpass.getpass("Пароль: ")
-    client = Client(args.url, token=args.token, user=args.user, password=password)
-
-    existing = client.existing()
+    client = connect(args, ap)
+    existing = client.tree(API)
     created = skipped = 0
 
     for parent_name, children in LOCATIONS.items():
@@ -118,7 +64,7 @@ def main():
             skipped += 1
             print(f"= уже есть: {parent_name}")
         else:
-            parent_id = client.create(parent_name, None)
+            parent_id = client.post(API, {"name": parent_name, "parent": None})["pk"]
             existing[key] = parent_id
             created += 1
             print(f"+ создано:  {parent_name}")
@@ -129,7 +75,7 @@ def main():
                 skipped += 1
                 print(f"    = уже есть: {parent_name} / {child}")
             else:
-                existing[ckey] = client.create(child, parent_id)
+                existing[ckey] = client.post(API, {"name": child, "parent": parent_id})["pk"]
                 created += 1
                 print(f"    + создано:  {parent_name} / {child}")
 

@@ -1,0 +1,71 @@
+# Номер: из райдера TECH_RIDER_NOMER.docx (28.09.2026)
+# Формат позиций описан в rovesnik.yaml.
+#
+# В райдере 4 караоке-комнаты с одинаковым набором, а в местах хранения их 5.
+# Ниже набор разложен по комнатам 1–4 и Лобби. Если караоке-комната —
+# это и Комната 5, допишите её в списки locations.
+
+venue: Номер
+source: TECH_RIDER_NOMER.docx
+
+items:
+  # --- Акустика: в комнате 1 Turbosound, в остальных Wharfedale
+  - name: Turbosound iP82
+    manufacturer: Turbosound
+    model: iP82
+    category: Звук / Акустические системы / Пассивные
+    qty: 2
+    location: Комната 1
+    check: проверить модель и что АС пассивные
+
+  - name: Wharfedale PT-X12
+    manufacturer: Wharfedale
+    model: PT-X12
+    category: Звук / Акустические системы / Пассивные
+    qty: 2
+    locations: [Комната 2, Комната 3, Комната 4, Лобби]
+
+  # --- Усилители, пульты, микрофоны
+  - name: Behringer KM1700
+    manufacturer: Behringer
+    model: KM1700
+    category: Звук / Усилители мощности
+    qty: 1
+    locations: [Комната 1, Комната 2, Комната 3, Комната 4, Лобби]
+
+  - name: Behringer XENYX 1202SFX
+    manufacturer: Behringer
+    model: XENYX 1202SFX
+    category: Звук / Микшерные пульты / Аналоговые
+    qty: 1
+    locations: [Комната 1, Комната 2, Комната 3, Комната 4]
+
+  - name: Behringer FLOW 8
+    manufacturer: Behringer
+    model: FLOW 8
+    category: Звук / Микшерные пульты / Цифровые
+    qty: 1
+    location: Лобби
+
+  - name: Arthur Forty U-9300C
+    manufacturer: Arthur Forty
+    model: U-9300C
+    category: Звук / Микрофоны / Радиосистемы
+    qty: 1
+    locations: [Комната 1, Комната 2, Комната 3, Комната 4, Лобби]
+    note: комплект = 1 приёмник + 2 ручных микрофона
+
+  # --- Караоке и видео
+  - name: Караоке-система AST
+    category: Прочее
+    qty: 1
+    trackable: true
+    locations: [Комната 1, Комната 2, Комната 3, Комната 4, Лобби]
+    check: модель и серийник
+
+  - name: LED-телевизор 43–55"
+    category: Видео / Телевизоры
+    qty: 1
+    trackable: true
+    locations: [Комната 1, Комната 2, Комната 3, Комната 4, Лобби]
+    check: в райдере без модели — записать производителя и модель, перенести в отдельную деталь
