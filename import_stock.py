@@ -141,7 +141,7 @@ def print_plan(parts, entries):
 # Производители (Company) и их модели в InvenTree относятся к правилу Purchase Order.
 REQUIRED_ROLES = {
     "part_category": ["view"],
-    "part": ["view", "add"],
+    "part": ["view", "add", "change"],
     "stock_location": ["view"],
     "stock": ["view", "add"],
     "purchase_order": ["view", "add"],
@@ -177,6 +177,9 @@ class Importer:
         self.locations = client.tree(LOCATION_API)
         self.parts = {p["name"]: p for p in client.get_all(PART_API)}
         self.companies = {c["name"].casefold(): c["pk"] for c in client.get_all(COMPANY_API)}
+        # Все привязки к моделям одним запросом: фильтр ?part= отвергает
+        # детали без флага «Покупная» ответом 400
+        self.mpns = {(m["part"], m["manufacturer"], m["MPN"]) for m in client.get_all(MPN_API)}
         self.stats = dict.fromkeys(["companies", "parts", "mpn", "stock", "stock_skipped"], 0)
 
     def manufacturer(self, name):
@@ -194,6 +197,10 @@ class Importer:
         existing = self.parts.get(spec["name"])
         if existing:
             pk = existing["pk"]
+            if spec["model"] and not existing.get("purchaseable"):
+                # Модель производителя (MPN) можно привязать только к покупной детали
+                self.c.request("PATCH", f"{PART_API}{pk}/", {"purchaseable": True})
+                existing["purchaseable"] = True
         else:
             category = resolve_path(self.categories, spec["category"])
             if category is None:
@@ -204,6 +211,7 @@ class Importer:
                 "description": spec["name"],
                 "category": category,
                 "trackable": spec["trackable"],
+                "purchaseable": True,
                 "active": True,
             })
             pk = res["pk"]
@@ -213,9 +221,9 @@ class Importer:
 
         if spec["manufacturer"] and spec["model"]:
             mfr = self.manufacturer(spec["manufacturer"])
-            mpns = self.c.get_all(MPN_API, part=pk)
-            if not any(m["manufacturer"] == mfr and m["MPN"] == spec["model"] for m in mpns):
+            if (pk, mfr, spec["model"]) not in self.mpns:
                 self.c.post(MPN_API, {"part": pk, "manufacturer": mfr, "MPN": spec["model"]})
+                self.mpns.add((pk, mfr, spec["model"]))
                 self.stats["mpn"] += 1
         elif spec["manufacturer"]:
             self.manufacturer(spec["manufacturer"])
