@@ -227,16 +227,16 @@ class Catalog:
     def __init__(self, ttl=300):
         self.ttl = ttl
         self._lock = asyncio.Lock()
-        self._loaded_at = 0.0
+        self._loaded_at = None  # None = ещё не загружали
         self.categories = self.locations = self.parts = self.mpns = []
         self.category_paths = self.location_paths = {}
 
     def invalidate(self):
-        self._loaded_at = 0.0
+        self._loaded_at = None
 
     async def load(self, it):
         async with self._lock:
-            if time.monotonic() - self._loaded_at < self.ttl:
+            if self._loaded_at is not None and time.monotonic() - self._loaded_at < self.ttl:
                 return self
             started = time.monotonic()
             self.categories, self.locations, self.parts, self.mpns = await asyncio.gather(

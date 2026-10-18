@@ -220,6 +220,19 @@ def test_new_model_and_catalog_cache(server):
     assert any(p["name"] == "Pioneer DJ DJM-750MK2" for p in catalog.parts)
 
 
+def test_catalog_loads_right_after_boot(server, monkeypatch):
+    """time.monotonic() отсчитывается от старта системы и на свежей машине меньше TTL."""
+    import bot.inventree
+    monkeypatch.setattr(bot.inventree.time, "monotonic", lambda: 10.0)
+
+    async def go():
+        api, it, catalog, _ = await session(server)
+        await catalog.load(it)
+        await api.close()
+        return catalog
+    assert run(go()).parts
+
+
 def test_catalog_loaded_once(server):
     async def go():
         api, it, catalog, _ = await session(server)
