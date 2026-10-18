@@ -2,55 +2,74 @@
 
 import asyncio
 import logging
+from pathlib import Path
 
-from aiogram import BaseMiddleware, Bot, Dispatcher
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
-from . import config
-from .handlers import router
+from . import config, logs
+from .handlers import common, routers
+from .inventree import Api, Catalog
+from .middlewares import Context
 from .numbering import Numbering
-from .recognize import Recognizer
+from .photos import PhotoBuffer
+from .recognize import ChainRecognizer, ClaudeRecognizer, LocalRecognizer
 from .storage import Storage
 
+log = logging.getLogger("bot")
 
-class AllowList(BaseMiddleware):
-    """Если задан BOT_ALLOWED_TELEGRAM_IDS, остальным бот не отвечает."""
+COMMANDS = [
+    ("start", "Главное меню"),
+    ("add", "Добавить прибор по фото"),
+    ("find", "Найти позицию"),
+    ("place", "Сменить место"),
+    ("profile", "Профиль и выход"),
+    ("cancel", "Отменить"),
+]
 
-    def __init__(self, allowed):
-        self.allowed = allowed
 
-    async def __call__(self, handler, event, data):
-        user = data.get("event_from_user")
-        if self.allowed and (not user or user.id not in self.allowed):
-            logging.info("отклонён пользователь %s", user.id if user else None)
-            return None
-        return await handler(event, data)
+def build_recognizer(cfg):
+    engines = []
+    for name in cfg.recognizers:
+        if name == "claude":
+            engines.append(ClaudeRecognizer(cfg.claude_model, cfg.claude_effort))
+        else:
+            engines.append(LocalRecognizer(cfg.local_llm_url, cfg.local_llm_model, cfg.local_llm_key,
+                                           cfg.local_llm_timeout))
+    return ChainRecognizer(engines)
 
 
 async def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = config.load()
+    logs.setup(cfg.data_dir, cfg.log_level)
+    api = Api(cfg.inventree_url)
+    recognizer = build_recognizer(cfg)
     bot = Bot(cfg.telegram_token, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(
         storage=MemoryStorage(),
         cfg=cfg,
-        store=Storage(cfg.db_path),
+        api=api,
+        store=Storage(Path(cfg.data_dir) / "bot.sqlite3"),
+        catalog=Catalog(),
         numbering=Numbering(cfg.serial_prefix, cfg.serial_digits),
-        recognizer=Recognizer(cfg.claude_model),
+        recognizer=recognizer,
+        photos=PhotoBuffer(),
     )
-    allow = AllowList(cfg.allowed_ids)
-    dp.message.outer_middleware(allow)
-    dp.callback_query.outer_middleware(allow)
-    dp.include_router(router)
-    await bot.set_my_commands([
-        BotCommand(command="add", description="Добавить прибор по фото"),
-        BotCommand(command="login", description="Войти аккаунтом InvenTree"),
-        BotCommand(command="cancel", description="Отменить"),
-        BotCommand(command="help", description="Помощь"),
-    ])
-    await dp.start_polling(bot)
+    dp.message.outer_middleware(Context())
+    dp.callback_query.outer_middleware(Context())
+    dp.errors.register(common.on_error)
+    dp.include_routers(*routers())
+
+    await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in COMMANDS])
+    log.info("бот запущен: InvenTree %s, распознавание %s", cfg.inventree_url, " → ".join(cfg.recognizers))
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await api.close()
+        await recognizer.close()
+        await bot.session.close()
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ class FakeInvenTree:
         self.db = {k: [] for k in ("category", "location", "part", "company", "mpn", "stock", "attachment")}
         self.removed = []  # вызовы /api/stock/remove/
         self.part_images = {}
+        self.requests = 0
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -50,6 +51,7 @@ class FakeInvenTree:
                 return json.loads(raw) if raw else {}
 
             def do_GET(self):
+                server.requests += 1
                 if not self.authorized():
                     return self.send({"detail": "auth"}, 401)
                 u = urlparse(self.path)
@@ -80,6 +82,7 @@ class FakeInvenTree:
                 self.send({"count": len(items), "next": None, "results": items})
 
             def do_POST(self):
+                server.requests += 1
                 if not self.authorized():
                     return self.send({"detail": "auth"}, 401)
                 d = self.body()
@@ -107,6 +110,7 @@ class FakeInvenTree:
                 self.send({k: v for k, v in added.items() if not isinstance(v, bytes)}, 201)
 
             def do_PATCH(self):
+                server.requests += 1
                 if not self.authorized():
                     return self.send({"detail": "auth"}, 401)
                 m = re.match(r"/api/(part|stock)/(\d+)/$", self.path)
@@ -122,6 +126,7 @@ class FakeInvenTree:
                 self.send(item)
 
             def do_DELETE(self):
+                server.requests += 1
                 m = re.match(r"/api/stock/(\d+)/$", self.path)
                 server.db["stock"].remove(server.get("stock", int(m.group(1))))
                 self.send({}, 204)
@@ -147,3 +152,18 @@ class FakeInvenTree:
 
     def close(self):
         self.httpd.shutdown()
+
+
+def seed(s):
+    """Каталог и склад, как после импорта райдера Пешки."""
+    for pk, name, parent in [(1, "DJ-оборудование", None), (2, "Проигрыватели", 1), (3, "Микшеры", 1)]:
+        s.db["category"].append({"pk": pk, "name": name, "parent": parent})
+    s.db["location"] += [{"pk": 10, "name": "Пешка", "parent": None},
+                         {"pk": 11, "name": "Диджейка", "parent": 10}]
+    s.db["part"].append({"pk": 1, "name": "Pioneer DJ XDJ-1000MK2", "category": 2,
+                         "trackable": False, "purchaseable": True, "image": None})
+    s.db["mpn"].append({"pk": 1, "part": 1, "manufacturer": 1, "MPN": "XDJ-1000MK2"})
+    # позиция из райдера: 2 шт. без серийника
+    s.db["stock"].append({"pk": 1, "part": 1, "location": 11, "quantity": 2, "serial": None, "batch": None})
+    # уже выданный номер у другого прибора
+    s.db["stock"].append({"pk": 2, "part": 1, "location": 10, "quantity": 1, "serial": "P2PTD-00007", "batch": "X1"})

@@ -1,21 +1,22 @@
 """Асинхронный клиент InvenTree API для бота.
 
-В отличие от inventree_client.Client (для разовых скриптов), ошибки здесь
-не завершают процесс, а поднимаются как InvenTreeError, а запросы уходят
-в отдельный поток, чтобы не блокировать бота.
+Одна aiohttp-сессия на весь бот: соединения с сервером переиспользуются
+(без нового TLS-рукопожатия на каждый запрос). Ошибки не завершают процесс,
+а поднимаются как InvenTreeError.
 """
 
 import asyncio
 import base64
-import json
+import logging
 import mimetypes
-import urllib.error
-import urllib.parse
-import urllib.request
-import uuid
+import time
+
+import aiohttp
+
+log = logging.getLogger(__name__)
 
 STATUS_OK = 10
-STATUS_ATTENTION = 50
+STOCK_DETAIL = {"part_detail": "true", "location_detail": "true"}
 
 
 class InvenTreeError(Exception):
@@ -25,61 +26,77 @@ class InvenTreeError(Exception):
         self.detail = detail
 
 
-def _multipart(fields, files):
-    boundary = uuid.uuid4().hex
-    out = []
-    for name, value in fields.items():
-        out.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
-    for name, (filename, data) in files.items():
-        ctype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        out.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
-            f"Content-Type: {ctype}\r\n\r\n".encode() + data + b"\r\n"
-        )
-    out.append(f"--{boundary}--\r\n".encode())
-    return b"".join(out), f"multipart/form-data; boundary={boundary}"
+class Api:
+    """Общий транспорт: базовый URL и пул соединений."""
+
+    def __init__(self, base_url, timeout=60):
+        self.base = base_url.rstrip("/")
+        self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self._session = None
+
+    @property
+    def session(self):
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=self.timeout)
+        return self._session
+
+    async def close(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+    def client(self, token):
+        return InvenTree(self, "Token " + token)
+
+    def basic(self, username, password):
+        raw = base64.b64encode(f"{username}:{password}".encode()).decode()
+        return InvenTree(self, "Basic " + raw)
 
 
 class InvenTree:
-    def __init__(self, base_url, token=None, basic=None):
-        self.base = base_url.rstrip("/")
-        if token:
-            self.auth = "Token " + token
-        else:
-            user, password = basic
-            self.auth = "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
+    """Клиент от имени конкретного пользователя."""
+
+    def __init__(self, api, auth):
+        self.api = api
+        self.auth = auth
+
+    def web_url(self, kind, pk):
+        return f"{self.api.base}/web/{kind}/{pk}"
 
     # --- транспорт
 
-    def _request(self, method, path, payload=None, params=None, files=None):
-        url = path if path.startswith("http") else self.base + path
-        if params:
-            url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
-        headers = {"Authorization": self.auth, "Accept": "application/json"}
-        data = None
-        if files:
-            data, headers["Content-Type"] = _multipart(payload or {}, files)
-        elif payload is not None:
-            data = json.dumps(payload).encode()
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                body = resp.read().decode()
-                return json.loads(body) if body else None
-        except urllib.error.HTTPError as e:
-            raise InvenTreeError(e.code, e.read().decode(errors="replace")[:500]) from None
-        except urllib.error.URLError as e:
-            raise InvenTreeError(0, f"нет связи с {self.base}: {e.reason}") from None
-
     async def call(self, method, path, payload=None, params=None, files=None):
-        return await asyncio.to_thread(self._request, method, path, payload, params, files)
+        url = path if path.startswith("http") else self.api.base + path
+        kwargs = {"params": params} if params else {}
+        if files:
+            form = aiohttp.FormData()
+            for key, value in (payload or {}).items():
+                form.add_field(key, str(value))
+            for key, (filename, data) in files.items():
+                form.add_field(key, data, filename=filename,
+                               content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream")
+            kwargs["data"] = form
+        elif payload is not None:
+            kwargs["json"] = payload
+        started = time.monotonic()
+        try:
+            async with self.api.session.request(
+                method, url, headers={"Authorization": self.auth, "Accept": "application/json"}, **kwargs
+            ) as resp:
+                body = await resp.text()
+                log.debug("%s %s → %s за %.0f мс", method, path, resp.status, (time.monotonic() - started) * 1000)
+                if resp.status >= 400:
+                    raise InvenTreeError(resp.status, body[:500])
+                return await resp.json(content_type=None) if body else None
+        except aiohttp.ClientError as e:
+            raise InvenTreeError(0, f"нет связи с {self.api.base}: {e}") from None
+        except asyncio.TimeoutError:
+            raise InvenTreeError(0, f"{self.api.base} не ответил вовремя") from None
 
     async def get(self, path, **params):
         return await self.call("GET", path, params=params or None)
 
-    async def post(self, path, payload):
-        return await self.call("POST", path, payload)
+    async def post(self, path, payload, files=None):
+        return await self.call("POST", path, payload, files=files)
 
     async def patch(self, path, payload, files=None):
         return await self.call("PATCH", path, payload, files=files)
@@ -97,37 +114,16 @@ class InvenTree:
     # --- пользователь
 
     async def obtain_token(self, name="telegram-bot"):
-        """Личный API-токен пользователя (клиент должен быть создан с basic=)."""
-        res = await self.get("/api/user/token/", name=name)
-        return res["token"]
-
-    async def me(self):
-        return await self.get("/api/user/me/")
+        """Личный API-токен (клиент должен быть создан через Api.basic)."""
+        return (await self.get("/api/user/token/", name=name))["token"]
 
     async def roles(self):
         return await self.get("/api/user/roles/")
 
-    def web_url(self, kind, pk):
-        return f"{self.base}/web/{kind}/{pk}"
-
-    # --- справочники
-
-    async def locations(self):
-        return await self.get_all("/api/stock/location/")
-
-    async def categories(self):
-        return await self.get_all("/api/part/category/")
-
-    async def parts(self):
-        return await self.get_all("/api/part/")
-
-    async def manufacturer_parts(self):
-        return await self.get_all("/api/company/part/manufacturer/")
-
-    async def companies(self):
-        return await self.get_all("/api/company/")
-
     # --- детали
+
+    async def part(self, pk):
+        return await self.get(f"/api/part/{pk}/")
 
     async def get_or_create_manufacturer(self, name):
         for c in await self.get_all("/api/company/", search=name):
@@ -138,14 +134,10 @@ class InvenTree:
         })
         return res["pk"]
 
-    async def create_part(self, name, category, manufacturer=None, model=None):
+    async def create_part(self, name, category, manufacturer="", model=""):
         part = await self.post("/api/part/", {
-            "name": name,
-            "description": name,
-            "category": category,
-            "trackable": True,
-            "purchaseable": True,
-            "active": True,
+            "name": name, "description": name, "category": category,
+            "trackable": True, "purchaseable": True, "active": True,
         })
         if manufacturer and model:
             mfr = await self.get_or_create_manufacturer(manufacturer)
@@ -164,35 +156,29 @@ class InvenTree:
     # --- склад
 
     async def unverified_stock(self, part_pk, location_pk):
-        """Позиции без серийника в этом месте (например, из райдера)."""
+        """Позиции без серийника ровно в этом месте (например, из райдера)."""
         items = await self.get_all("/api/stock/", part=part_pk, location=location_pk, cascade="false")
         return [i for i in items if not i.get("serial") and float(i.get("quantity", 0)) >= 1]
 
-    DETAIL = {"part_detail": "true", "location_detail": "true"}
-
     async def find_by_serial(self, serial):
-        items = await self.get_all("/api/stock/", serial=serial, **self.DETAIL)
+        items = await self.get_all("/api/stock/", serial=serial, **STOCK_DETAIL)
         return items[0] if items else None
 
     async def find_by_batch(self, batch, part_pk=None):
-        params = {"batch": batch, **self.DETAIL}
+        params = {"batch": batch, **STOCK_DETAIL}
         if part_pk:
             params["part"] = part_pk
         return await self.get_all("/api/stock/", **params)
 
-    async def search_stock(self, text):
-        return await self.get_all("/api/stock/", search=text, **self.DETAIL)
+    async def search_stock(self, text, detail=True):
+        return await self.get_all("/api/stock/", search=text, **(STOCK_DETAIL if detail else {}))
 
     async def stock_item(self, pk):
-        return await self.get(f"/api/stock/{pk}/", **self.DETAIL)
-
-    async def location(self, pk):
-        return await self.get(f"/api/stock/location/{pk}/")
+        return await self.get(f"/api/stock/{pk}/", **STOCK_DETAIL)
 
     async def create_stock(self, part_pk, location_pk, notes):
         res = await self.post("/api/stock/", {
-            "part": part_pk, "location": location_pk, "quantity": 1,
-            "status": STATUS_OK, "notes": notes,
+            "part": part_pk, "location": location_pk, "quantity": 1, "status": STATUS_OK, "notes": notes,
         })
         return res[0] if isinstance(res, list) else res
 
@@ -206,10 +192,66 @@ class InvenTree:
         await self.call("DELETE", f"/api/stock/{stock_pk}/")
 
     async def take_one(self, stock_pk, note):
-        """Списывает 1 шт. с позиции (например, из райдера после сериализации)."""
+        """Списывает 1 шт. с позиции (например, из райдера после сверки)."""
         await self.post("/api/stock/remove/", {"items": [{"pk": stock_pk, "quantity": 1}], "notes": note})
 
     async def attach(self, model_type, model_id, filename, data, comment=""):
-        await self.call("POST", "/api/attachment/", {
-            "model_type": model_type, "model_id": model_id, "comment": comment,
-        }, files={"attachment": (filename, data)})
+        await self.post("/api/attachment/", {"model_type": model_type, "model_id": model_id, "comment": comment},
+                        files={"attachment": (filename, data)})
+
+
+def tree_paths(nodes):
+    """{pk: "Звук / Микрофоны / Проводные"} для категорий или мест."""
+    by_pk = {n["pk"]: n for n in nodes}
+    paths = {}
+
+    def path(pk):
+        if pk not in paths:
+            parent = by_pk[pk].get("parent")
+            name = by_pk[pk]["name"]
+            paths[pk] = f"{path(parent)} / {name}" if parent in by_pk else name
+        return paths[pk]
+
+    for pk in by_pk:
+        path(pk)
+    return paths
+
+
+class Catalog:
+    """Кэш справочников (категории, места, детали, модели производителей).
+
+    Загружается параллельно одним заходом и живёт ttl секунд; после создания
+    детали сбрасывается. Так распознавание не тянет весь каталог заново.
+    """
+
+    def __init__(self, ttl=300):
+        self.ttl = ttl
+        self._lock = asyncio.Lock()
+        self._loaded_at = 0.0
+        self.categories = self.locations = self.parts = self.mpns = []
+        self.category_paths = self.location_paths = {}
+
+    def invalidate(self):
+        self._loaded_at = 0.0
+
+    async def load(self, it):
+        async with self._lock:
+            if time.monotonic() - self._loaded_at < self.ttl:
+                return self
+            started = time.monotonic()
+            self.categories, self.locations, self.parts, self.mpns = await asyncio.gather(
+                it.get_all("/api/part/category/"),
+                it.get_all("/api/stock/location/"),
+                it.get_all("/api/part/"),
+                it.get_all("/api/company/part/manufacturer/"),
+            )
+            self.category_paths = tree_paths(self.categories)
+            self.location_paths = tree_paths(self.locations)
+            self._loaded_at = time.monotonic()
+            log.info("каталог загружен за %.0f мс: %d категорий, %d мест, %d деталей",
+                     (time.monotonic() - started) * 1000, len(self.categories), len(self.locations), len(self.parts))
+            return self
+
+    @property
+    def model_names(self):
+        return sorted(p["name"] for p in self.parts)

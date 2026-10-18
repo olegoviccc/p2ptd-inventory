@@ -2,28 +2,32 @@
 
 import io
 import json
+from functools import lru_cache
 from pathlib import Path
 
 import qrcode
 import zxingcpp
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-MAX_SIDE = 1568  # больше модели не нужно, лишние пиксели только стоят денег
+MAX_SIDE = 1568  # больше модели не нужно, лишние пиксели только замедляют и стоят денег
 
 
-def prepare(data):
-    """Поворот по EXIF, уменьшение и JPEG для отправки в модель."""
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+def _open(data):
+    return ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+
+
+def analyze(data):
+    """Одно открытие фото: (JPEG для модели, штрихкоды). Блокирующая, вызывать через to_thread."""
+    img = _open(data)
+    barcodes = [r.text for r in zxingcpp.read_barcodes(img) if r.text]
     img.thumbnail((MAX_SIDE, MAX_SIDE))
     out = io.BytesIO()
     img.save(out, "JPEG", quality=85)
-    return out.getvalue()
+    return out.getvalue(), barcodes
 
 
 def read_barcodes(data):
-    """Все штрихкоды и QR на фото (точное чтение, без угадывания)."""
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
-    return [r.text for r in zxingcpp.read_barcodes(img) if r.text]
+    return [r.text for r in zxingcpp.read_barcodes(_open(data)) if r.text]
 
 
 def stockitem_from_qr(text):
@@ -44,6 +48,7 @@ FONT_PATHS = [
 ]
 
 
+@lru_cache(maxsize=8)
 def _font(size):
     for p in FONT_PATHS:
         if Path(p).exists():
@@ -56,8 +61,7 @@ def label_png(stock_pk, number, title, subtitle=""):
     w, h = 732, 342
     img = Image.new("RGB", (w, h), "white")
     qr = qrcode.make(json.dumps({"stockitem": stock_pk}), border=1, box_size=10)
-    qr = qr.resize((h - 20, h - 20)).convert("RGB")
-    img.paste(qr, (10, 10))
+    img.paste(qr.resize((h - 20, h - 20)).convert("RGB"), (10, 10))
 
     draw = ImageDraw.Draw(img)
     x = h + 10
