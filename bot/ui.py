@@ -39,11 +39,21 @@ class Cat(CallbackData, prefix="cat"):
     pk: int      # 0 = корень
 
 
+class Item(CallbackData, prefix="it"):
+    """Действия с позицией склада: open, move, mv_venue, mv_set, status, st_set, batch, note,
+    photo, label, delete, del_yes. value — статус или место, если нужно."""
+    action: str
+    pk: int
+    value: int = 0
+
+
 RECOGNIZE, SAVE, EDIT, CATEGORY, DROP, CHANGE_PLACE, CANCEL, LOGOUT = (
     "recognize", "save", "edit", "category", "drop", "change_place", "cancel", "logout")
 
 STATUS_NAMES = {10: "OK", 50: "Требует внимания", 55: "Повреждено", 60: "Уничтожено",
                 65: "Отклонено", 70: "Потеряно", 75: "Карантин", 85: "Возвращено"}
+# Статусы, которые можно поставить из бота (коды StockStatus InvenTree)
+EDITABLE_STATUSES = [10, 50, 55, 70, 60]
 CONFIDENCE = {"high": "высокая", "medium": "средняя", "low": "низкая"}
 
 
@@ -107,11 +117,56 @@ def card_kb(draft):
     return buttons(*rows)
 
 
+def item_kb(item):
+    pk = item["pk"]
+    rows = [
+        [("📍 Переместить", Item(action="move", pk=pk)), ("🔧 Статус", Item(action="status", pk=pk))],
+        [("🏷 Заводской S/N", Item(action="batch", pk=pk)), ("📝 Заметка", Item(action="note", pk=pk))],
+        [("📷 Фото", Item(action="photo", pk=pk))]
+        + ([("🖨 Этикетка", Item(action="label", pk=pk))] if item.get("serial") else []),
+        ("🗑 Удалить", Item(action="delete", pk=pk)),
+    ]
+    return buttons(*rows)
+
+
+def back_to_item(pk):
+    return ("⬅️ К позиции", Item(action="open", pk=pk))
+
+
+def move_venues_kb(locations, pk):
+    venues = sorted((l for l in locations if not l.get("parent")), key=lambda l: l["name"])
+    rows = _pairs([(l["name"], Item(action="mv_venue", pk=pk, value=l["pk"])) for l in venues])
+    return buttons(*rows, back_to_item(pk))
+
+
+def move_places_kb(locations, pk, venue_pk):
+    places = sorted((l for l in locations if l.get("parent") == venue_pk), key=lambda l: l["name"])
+    rows = _pairs([(l["name"], Item(action="mv_set", pk=pk, value=l["pk"])) for l in places])
+    return buttons(*rows, ("Само заведение", Item(action="mv_set", pk=pk, value=venue_pk)),
+                   ("⬅️ Назад", Item(action="move", pk=pk)))
+
+
+def status_kb(pk, current):
+    rows = [(("• " if s == current else "") + STATUS_NAMES[s], Item(action="st_set", pk=pk, value=s))
+            for s in EDITABLE_STATUSES]
+    return buttons(*_pairs(rows), back_to_item(pk))
+
+
+def delete_kb(pk):
+    return buttons([("🗑 Да, удалить", Item(action="del_yes", pk=pk)), back_to_item(pk)])
+
+
+def item_input_kb(pk):
+    return buttons(back_to_item(pk))
+
+
 # --- тексты
 
 HELP_TEXT = (
     f"<b>{ADD}</b> — сфотографируйте шильдик и общий вид, бот сам распознает модель и серийник.\n"
-    f"<b>{FIND}</b> — по номеру P2PTD, заводскому серийнику или фото QR-этикетки.\n"
+    f"<b>{FIND}</b> — по номеру P2PTD, заводскому серийнику или фото QR-этикетки. "
+    "В карточке позиции можно переместить её, сменить статус, исправить S/N, добавить заметку или фото, "
+    "перепечатать этикетку.\n"
     f"<b>{PLACE}</b> — где вы сейчас; бот запоминает место для следующих приборов.\n"
     f"<b>{PROFILE}</b> — ваш аккаунт и выход.\n\n"
     "Номер или серийник можно прислать и просто так, без кнопок."
@@ -147,14 +202,18 @@ def item_text(item, url):
     if not item.get("serial"):
         lines.append(f"Количество: {float(item.get('quantity', 0)):g}")
     lines += [f"Место: {esc((item.get('location_detail') or {}).get('pathstring', '—'))}",
-              f"Статус: {STATUS_NAMES.get(item.get('status'), item.get('status'))}",
-              url]
+              f"Статус: {STATUS_NAMES.get(item.get('status'), item.get('status'))}"]
+    note = (item.get("notes") or "").strip().splitlines()
+    if note:
+        lines.append(f"Заметка: {esc(note[-1][:200])}")
+    lines.append(url)
     return "\n".join(lines)
 
 
 EVENT_NAMES = {"login": "вошёл", "logout": "вышел", "recognized": "распознал", "saved": "добавил",
                "save_failed": "не смог сохранить", "recognize_failed": "не распознал", "lookup": "искал",
-               "error": "ошибка"}
+               "moved": "переместил", "status": "сменил статус", "batch": "исправил S/N", "note": "добавил заметку",
+               "photo": "добавил фото", "deleted": "удалил", "error": "ошибка"}
 
 
 def journal_text(events):

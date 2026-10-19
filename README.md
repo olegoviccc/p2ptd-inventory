@@ -24,6 +24,7 @@ python create_locations.py      # заведения и места хранен�
 python create_categories.py     # дерево категорий
 python import_stock.py --dry-run
 python import_stock.py          # оборудование из data/riders/*.yaml
+python renumber_serials.py      # один раз: номера P2PTD-00001 → P2PTD0001 (есть --dry-run)
 ```
 
 Все скрипты можно запускать повторно: то, что уже есть, пропускается.

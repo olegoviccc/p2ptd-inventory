@@ -14,6 +14,7 @@ class FakeInvenTree:
     def __init__(self):
         self.db = {k: [] for k in ("category", "location", "part", "company", "mpn", "stock", "attachment")}
         self.removed = []  # вызовы /api/stock/remove/
+        self.transfers = []  # вызовы /api/stock/transfer/
         self.part_images = {}
         self.requests = 0
         server = self
@@ -91,6 +92,11 @@ class FakeInvenTree:
                     "/api/company/part/manufacturer/": "mpn", "/api/stock/": "stock",
                     "/api/attachment/": "attachment",
                 }.get(self.path)
+                if self.path == "/api/stock/transfer/":
+                    for row in d["items"]:
+                        server.get("stock", row["pk"])["location"] = d["location"]
+                    server.transfers.append(d)
+                    return self.send({})
                 if self.path == "/api/stock/remove/":
                     for row in d["items"]:
                         item = server.get("stock", row["pk"])
@@ -106,6 +112,7 @@ class FakeInvenTree:
                 if table == "stock":
                     d.setdefault("serial", None)
                     d.setdefault("batch", None)
+                    d.setdefault("notes", "")
                 added = server.add(table, d)
                 self.send({k: v for k, v in added.items() if not isinstance(v, bytes)}, 201)
 
@@ -129,7 +136,8 @@ class FakeInvenTree:
                 server.requests += 1
                 m = re.match(r"/api/stock/(\d+)/$", self.path)
                 server.db["stock"].remove(server.get("stock", int(m.group(1))))
-                self.send({}, 204)
+                self.send_response(204)  # как настоящий InvenTree: без тела
+                self.end_headers()
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
@@ -164,6 +172,7 @@ def seed(s):
                          "trackable": False, "purchaseable": True, "image": None})
     s.db["mpn"].append({"pk": 1, "part": 1, "manufacturer": 1, "MPN": "XDJ-1000MK2"})
     # позиция из райдера: 2 шт. без серийника
-    s.db["stock"].append({"pk": 1, "part": 1, "location": 11, "quantity": 2, "serial": None, "batch": None})
+    s.db["stock"].append({"pk": 1, "part": 1, "location": 11, "quantity": 2, "serial": None, "batch": None, "notes": ""})
     # уже выданный номер у другого прибора
-    s.db["stock"].append({"pk": 2, "part": 1, "location": 10, "quantity": 1, "serial": "P2PTD-00007", "batch": "X1"})
+    s.db["stock"].append({"pk": 2, "part": 1, "location": 10, "quantity": 1, "serial": "P2PTD-00007", "batch": "X1",
+                        "notes": ""})

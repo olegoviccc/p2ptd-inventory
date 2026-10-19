@@ -9,6 +9,7 @@ from aiogram.types import Message
 
 from .. import images, service, ui
 from . import Add, Find
+from .item import show
 
 router = Router(name="lookup")
 
@@ -32,7 +33,7 @@ async def find_text(message: Message, state: FSMContext, user, it, numbering, st
     if not items:
         return await message.answer(f"Ничего не нашёл. Добавить прибор: «{ui.ADD}».")
     for item in items[:5]:
-        await message.answer(ui.item_text(item, it.web_url("stock/item", item["pk"])))
+        await show(message, it, item)
     if len(items) > 5:
         await message.answer(f"…и ещё {len(items) - 5}. Уточните запрос.")
 
@@ -46,5 +47,4 @@ async def find_photo(message: Message, state: FSMContext, bot: Bot, it):
     await state.clear()
     if not pks:
         return await message.answer(f"QR-этикетки на фото не нашёл. Чтобы добавить прибор, нажмите «{ui.ADD}».")
-    item = await it.stock_item(pks[0])
-    await message.answer(ui.item_text(item, it.web_url("stock/item", item["pk"])))
+    await show(message, it, await it.stock_item(pks[0]))

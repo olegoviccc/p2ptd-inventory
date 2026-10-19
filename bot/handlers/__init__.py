@@ -21,10 +21,22 @@ class Find(StatesGroup):
     query = State()
 
 
-def routers():
-    from . import add, auth, common, lookup
+class ItemEdit(StatesGroup):
+    batch = State()
+    note = State()
+    photo = State()
 
-    for r in (add.router, lookup.router):
-        r.message.middleware(RequireLogin())
-        r.callback_query.middleware(RequireLogin())
-    return [common.router, auth.router, add.router, lookup.router]
+
+_routers = None
+
+
+def routers():
+    global _routers
+    if _routers is None:
+        from . import add, auth, common, item, lookup
+
+        for r in (add.router, item.router, lookup.router):
+            r.message.middleware(RequireLogin())
+            r.callback_query.middleware(RequireLogin())
+        _routers = [common.router, auth.router, add.router, item.router, lookup.router]
+    return _routers

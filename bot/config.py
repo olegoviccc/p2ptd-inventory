@@ -86,6 +86,6 @@ def load():
         local_llm_timeout=float(env("LOCAL_LLM_TIMEOUT", "300")),
         local_llm_think=local_think,
         local_llm_source=source,
-        serial_prefix=env("BOT_SERIAL_PREFIX", "P2PTD-"),
-        serial_digits=int(env("BOT_SERIAL_DIGITS", "5")),
+        serial_prefix=env("BOT_SERIAL_PREFIX", "P2PTD"),
+        serial_digits=int(env("BOT_SERIAL_DIGITS", "4")),
     )

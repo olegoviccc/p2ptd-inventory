@@ -176,7 +176,8 @@ async def save(call: CallbackQuery, state: FSMContext, user, it, catalog, number
                f"{it.web_url('stock/item', result.stock_pk)}")
     if result.warnings:
         caption += "\n\n⚠️ " + "\n⚠️ ".join(ui.esc(w) for w in result.warnings)
-    await call.message.answer_document(BufferedInputFile(label, f"{result.number}.png"), caption=caption)
+    await call.message.answer_document(BufferedInputFile(label, f"{result.number}.png"), caption=caption,
+                                       reply_markup=ui.buttons(("✏️ Изменить", ui.Item(action="open", pk=result.stock_pk))))
 
     photos.clear(call.from_user.id)
     await state.set_state(Add.photos)

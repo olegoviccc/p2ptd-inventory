@@ -56,34 +56,55 @@ def _font(size):
     return ImageFont.load_default(size)
 
 
+def _fit(draw, text, max_width, size, min_size=18):
+    """Самый крупный шрифт (не больше size), при котором текст влезает в ширину."""
+    while size > min_size and draw.textlength(text, font=_font(size)) > max_width:
+        size -= 2
+    return _font(size)
+
+
+def _wrap(draw, text, font, max_width):
+    """Перенос по словам с учётом реальной ширины букв; слишком длинное слово режется."""
+    lines, cur = [], ""
+    for word in text.split():
+        candidate = f"{cur} {word}".strip()
+        if draw.textlength(candidate, font=font) <= max_width:
+            cur = candidate
+            continue
+        if cur:
+            lines.append(cur)
+        while draw.textlength(word, font=font) > max_width and len(word) > 1:
+            cut = len(word)
+            while cut > 1 and draw.textlength(word[:cut], font=font) > max_width:
+                cut -= 1
+            lines.append(word[:cut])
+            word = word[cut:]
+        cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def label_png(stock_pk, number, title, subtitle=""):
-    """Этикетка 62×29 мм при 300 dpi: QR позиции InvenTree + номер и модель."""
-    w, h = 732, 342
+    """Этикетка 62×29 мм при 300 dpi: QR позиции InvenTree + номер и модель.
+
+    Номер и подпись уменьшаются, пока не влезут: ничего не обрезается.
+    """
+    w, h, pad = 732, 342, 28  # справа запас: принтеры часто не печатают край
     img = Image.new("RGB", (w, h), "white")
     qr = qrcode.make(json.dumps({"stockitem": stock_pk}), border=1, box_size=10)
     img.paste(qr.resize((h - 20, h - 20)).convert("RGB"), (10, 10))
 
     draw = ImageDraw.Draw(img)
-    x = h + 10
-    draw.text((x, 40), number, font=_font(56), fill="black")
-    for i, line in enumerate(_wrap(title, 22)[:3]):
-        draw.text((x, 130 + i * 44), line, font=_font(34), fill="black")
+    x = h + 4
+    max_width = w - x - pad
+    draw.text((x, 30), number, font=_fit(draw, number, max_width, 64), fill="black")
+    title_font = _font(32)
+    for i, line in enumerate(_wrap(draw, title, title_font, max_width)[:3]):
+        draw.text((x, 120 + i * 42), line, font=title_font, fill="black")
     if subtitle:
-        draw.text((x, h - 50), subtitle[:30], font=_font(26), fill="black")
+        draw.text((x, h - 48), subtitle, font=_fit(draw, subtitle, max_width, 26, 14), fill="black")
 
     out = io.BytesIO()
     img.save(out, "PNG", dpi=(300, 300))
     return out.getvalue()
-
-
-def _wrap(text, width):
-    lines, cur = [], ""
-    for word in text.split():
-        if cur and len(cur) + 1 + len(word) > width:
-            lines.append(cur)
-            cur = word
-        else:
-            cur = f"{cur} {word}".strip()
-    if cur:
-        lines.append(cur)
-    return lines

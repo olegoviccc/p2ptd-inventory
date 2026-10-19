@@ -188,6 +188,15 @@ class InvenTree:
             payload["batch"] = batch
         return await self.patch(f"/api/stock/{stock_pk}/", payload)
 
+    async def update_stock(self, stock_pk, **fields):
+        return await self.patch(f"/api/stock/{stock_pk}/", fields)
+
+    async def transfer(self, stock_pk, quantity, location_pk, note):
+        """Перемещение с записью в историю позиции."""
+        await self.post("/api/stock/transfer/", {
+            "items": [{"pk": stock_pk, "quantity": quantity}], "location": location_pk, "notes": note,
+        })
+
     async def delete_stock(self, stock_pk):
         await self.call("DELETE", f"/api/stock/{stock_pk}/")
 
