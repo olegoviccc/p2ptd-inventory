@@ -37,7 +37,7 @@ def build_recognizer(cfg):
             engines.append(ClaudeRecognizer(cfg.claude_model, cfg.claude_effort))
         else:
             engines.append(LocalRecognizer(cfg.local_llm_url, cfg.local_llm_model, cfg.local_llm_key,
-                                           cfg.local_llm_timeout))
+                                           cfg.local_llm_timeout, cfg.local_llm_think))
     return ChainRecognizer(engines)
 
 
@@ -64,6 +64,10 @@ async def main():
 
     await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in COMMANDS])
     log.info("бот запущен: InvenTree %s, распознавание %s", cfg.inventree_url, " → ".join(cfg.recognizers))
+    if "local" in cfg.recognizers:
+        log.info("своя модель: %s на %s (настройки: %s)", cfg.local_llm_model, cfg.local_llm_url, cfg.local_llm_source)
+    for engine, problem in (await recognizer.check()).items():
+        log.warning("распознавание %s: %s", engine, problem)
     try:
         await dp.start_polling(bot)
     finally:

@@ -103,6 +103,9 @@ def test_claude_refusal_and_cleanup():
 
 
 def local_llm_app(reply, seen):
+    async def models(request):
+        return web.json_response({"data": [{"id": "qwen2.5vl"}, {"id": "gpt-oss-20b"}]})
+
     async def completions(request):
         seen.append(await request.json())
         if reply is None:
@@ -110,17 +113,19 @@ def local_llm_app(reply, seen):
         return web.json_response({"choices": [{"message": {"content": reply}}]})
     app = web.Application()
     app.router.add_post("/v1/chat/completions", completions)
+    app.router.add_get("/v1/models", models)
     return app
 
 
-async def with_local_llm(reply, fn):
+async def with_local_llm(reply, fn, **kw):
     seen = []
     runner = web.AppRunner(local_llm_app(reply, seen))
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
-    local = LocalRecognizer(f"http://127.0.0.1:{port}/v1", "qwen2.5vl", timeout=5)
+    local = LocalRecognizer(f"http://127.0.0.1:{port}/v1", kw.get("model", "qwen2.5vl"), timeout=5,
+                            think=kw.get("think"))
     try:
         return await fn(local), seen
     finally:
@@ -135,6 +140,16 @@ def test_local_llm_openai_compatible():
     body = seen[0]
     assert body["model"] == "qwen2.5vl" and body["response_format"]["type"] == "json_schema"
     assert body["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_local_llm_think_and_check():
+    async def go(local):
+        await local.recognize([b"a"], CATS)
+        return await local.check()
+    problem, seen = run(with_local_llm(json.dumps(REC), go, think=False))
+    assert problem is None and seen[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    problem, seen = run(with_local_llm(json.dumps(REC), go, think="low", model="nope"))
+    assert seen[0]["reasoning_effort"] == "low" and "модели nope нет" in problem
 
 
 def test_chain_falls_back_to_claude():
@@ -281,3 +296,54 @@ def test_event_journal(tmp_path):
     store.log_event(1, "anna", "lookup", query="X1", found=0)
     events = store.recent_events()
     assert [e.action for e in events] == ["lookup", "saved"] and events[1].details["number"] == "P2PTD-00001"
+
+
+# --- подключение к olegovic-llm
+
+
+OLEGOVIC_TOML = """
+[llm]
+backend = "openai"
+base_url = "http://127.0.0.1:8080"
+[llm.models]
+smart = "qwen3.6-35b-a3b"
+vision = "{vision}"
+[llm.think]
+"qwen3.6-35b-a3b" = false
+"""
+
+
+def test_olegovic_config(tmp_path):
+    from bot import olegovic
+    path = tmp_path / "config.toml"
+    path.write_text(OLEGOVIC_TOML.format(vision=""), encoding="utf-8")
+    found = olegovic.load(path)
+    assert (found.url, found.model, found.think) == ("http://127.0.0.1:8080/v1", "qwen3.6-35b-a3b", False)
+    path.write_text(OLEGOVIC_TOML.format(vision="gemma-4-31b"), encoding="utf-8")
+    assert olegovic.load(path).model == "gemma-4-31b"
+    path.write_text("[general]\nlanguage = 'ru'\n", encoding="utf-8")  # всё по умолчанию, как в olegovic
+    assert olegovic.load(path).url == "http://127.0.0.1:11434/v1"
+
+
+def test_config_with_olegovic(tmp_path, monkeypatch):
+    from bot import config
+    path = tmp_path / "config.toml"
+    path.write_text(OLEGOVIC_TOML.format(vision=""), encoding="utf-8")
+    monkeypatch.setattr(config, "load_env", lambda: None)
+    for key in ("LOCAL_LLM_URL", "LOCAL_LLM_MODEL", "LOCAL_LLM_THINK", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:x")
+    monkeypatch.setenv("INVENTREE_URL", "https://inv.example/")
+    monkeypatch.setenv("OLEGOVIC_CONFIG", str(path))
+    monkeypatch.setenv("BOT_RECOGNIZER", "olegovic")
+    cfg = config.load()
+    assert cfg.recognizers == ("local",) and cfg.local_llm_model == "qwen3.6-35b-a3b"
+    assert cfg.local_llm_url == "http://127.0.0.1:8080/v1" and cfg.local_llm_think is False
+
+    monkeypatch.setenv("BOT_RECOGNIZER", "olegovic,claude")  # с запасным Claude нужен ключ
+    with pytest.raises(SystemExit):
+        config.load()
+    monkeypatch.setenv("LOCAL_LLM_THINK", "true")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    cfg = config.load()
+    assert cfg.recognizers == ("local", "claude") and cfg.local_llm_think is True

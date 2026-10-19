@@ -1,0 +1,17 @@
+# Telegram-бот p2ptd рядом с olegovic-llm (пользовательский сервис, как olegovic-bot.service).
+# Установка: docs/BOT.md → «Запуск на ПК рядом с olegovic-llm».
+[Unit]
+Description=p2ptd: Telegram-бот добавления оборудования в InvenTree
+After=network-online.target llama-swap.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/p2ptd-inventory
+ExecStart=%h/p2ptd-inventory/.venv/bin/python -m bot
+Restart=always
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

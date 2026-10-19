@@ -44,28 +44,28 @@
 1. **Штрихкоды** (`zxing-cpp`) читаются точно, без угадывания. Ими проверяется серийник.
 2. **Модель с компьютерным зрением** возвращает строго JSON: производитель, модель, серийник, категория из нашего дерева, лучшее фото для карточки, уверенность. Два движка:
    * **Claude API** (`claude-opus-5-5`, effort `low` — быстрее; если на ваших фото будет ошибаться, поднимем);
-   * **своя модель** с OpenAI-совместимым API (см. ниже).
+   * **модель olegovic-llm** на вашем ПК (см. ниже) или любой OpenAI-совместимый сервер.
 
-   Можно включить цепочку `local,claude`: сначала своя модель, при ошибке или недоступности — Claude.
+   Можно включить цепочку `olegovic,claude`: сначала своя модель, при ошибке или недоступности — Claude.
 3. **Подтверждение человеком.** Без «Сохранить» в InvenTree ничего не пишется. Фото шильдика всегда остаётся во вложениях.
 
-### Своя модель вместо Claude
+### Модель olegovic-llm (своя, на ПК)
 
-Подойдёт любой сервер с OpenAI-совместимым `/v1/chat/completions`: Ollama, LM Studio, llama.cpp server, vLLM.
+На ПК уже работает olegovic-llm: llama-swap на `127.0.0.1:8080` (или Ollama на `11434`) с моделью, которая видит изображения (по умолчанию `qwen3.6-35b-a3b`). Бот p2ptd запускается **на этом же ПК** и ходит в тот же сервер. Туннель не нужен, код olegovic не копируется.
 
-Условия:
+`BOT_RECOGNIZER=olegovic` — бот читает `~/.config/olegovic/config.toml` (только его, не `secrets.env`) и берёт оттуда:
 
-* **Модель должна понимать изображения** (vision): например Qwen2.5-VL / Qwen3-VL, Gemma 3, MiniCPM-V, Llama 3.2 Vision. Текстовая модель фото не прочитает.
-* **Бот должен до неё достучаться.** Бот работает на сервере, а модель — на вашем компьютере, поэтому нужен туннель (Tailscale, Cloudflare Tunnel или проброс порта с паролем). Компьютер должен быть включён, когда сотрудники работают с ботом.
-* **Качество.** Небольшие локальные модели заметно чаще ошибаются в серийниках, чем Claude. Сверка со штрихкодом и подтверждение человеком страхуют, но лучше сначала прогнать 20–30 реальных фото шильдиков и сравнить.
+* адрес сервера моделей (`llm.base_url`);
+* модель роли **vision**, а если она пустая — **smart**. Это та же модель, которой olegovic читает фото, поэтому llama-swap не перезагружает модели между двумя ботами;
+* настройку think этой модели из `[llm.think]`. `LOCAL_LLM_THINK=false` выключит размышления у Qwen и ускорит ответ.
 
-Настройка в `.env`:
+При старте бот проверяет, что сервер отвечает и модель на нём есть. Если нет, в логе будет предупреждение.
 
-```
-BOT_RECOGNIZER=local,claude          # или local — только своя модель
-LOCAL_LLM_URL=http://<адрес>:11434/v1
-LOCAL_LLM_MODEL=qwen2.5vl:7b
-```
+`BOT_RECOGNIZER=olegovic,claude` — если ПК занят тяжёлой задачей или модель не ответила, распознаёт Claude (нужен `ANTHROPIC_API_KEY`).
+
+Небольшие локальные модели чаще ошибаются в серийниках, чем Claude. Сверка со штрихкодом и подтверждение человеком страхуют, но стоит прогнать 20–30 реальных фото шильдиков.
+
+Подойдёт и любой другой OpenAI-совместимый сервер с vision-моделью (LM Studio, vLLM): `BOT_RECOGNIZER=local` и `LOCAL_LLM_URL` / `LOCAL_LLM_MODEL`.
 
 ## Внутренние номера
 
@@ -106,6 +106,7 @@ bot/
   service.py       логика без Telegram: распознать → черновик → сохранить
   inventree.py     клиент InvenTree (aiohttp, общий пул соединений) и кэш каталога
   recognize.py     Claude, своя модель, цепочка движков
+  olegovic.py      адрес и модель из конфига olegovic-llm на этом ПК
   photos.py        фото текущего прибора в памяти
   images.py        подготовка фото, штрихкоды, этикетки
   matching.py      сопоставление модели с каталогом
@@ -123,25 +124,46 @@ tests/             поддельный InvenTree и Telegram, сквозной 
 
 ## Статус
 
-Готово: вход, место, фото → распознавание (Claude или своя модель) → карточка → сохранение с номером, списание из райдера, вложения, этикетка, поиск, кнопочное меню, логи и журнал.
+Готово: вход, место, фото → распознавание (модель olegovic-llm на ПК, любая своя модель или Claude) → карточка → сохранение с номером, списание из райдера, вложения, этикетка, поиск, кнопочное меню, логи и журнал.
 
 Проверено тестами (`tests/`): модули по отдельности и сквозной сценарий через настоящие обработчики aiogram против поддельных Telegram и InvenTree. **С настоящими InvenTree, Telegram и моделями ещё не запускался.**
 
 Дальше: мануалы, перемещение и смена статуса из бота, печать этикеток на принтер.
 
-## Запуск
+## Запуск на ПК рядом с olegovic-llm (основной вариант)
 
-1. Создайте бота у @BotFather. Для Claude получите ключ на console.anthropic.com, для своей модели — см. «Своя модель вместо Claude».
-2. Заполните `.env` в корне репозитория по шаблону `.env.example`.
-3. Из корня репозитория:
-   ```
-   docker build -f bot/Dockerfile -t p2ptd-bot .
-   docker run -d --name p2ptd-bot --restart unless-stopped --env-file .env -v p2ptd-bot-data:/app/bot_data p2ptd-bot
-   docker logs -f p2ptd-bot     # смотреть лог
-   ```
-   Без Docker: `pip install -r bot/requirements.txt` и `python -m bot`.
-4. В Telegram: «🔑 Войти» → «➕ Добавить прибор».
+Бот работает как пользовательский сервис systemd, так же как `olegovic-bot.service`.
 
-Claude API доступен только из поддерживаемых стран, поэтому сервер с ботом должен быть в такой стране.
+1. Создайте **отдельного** бота у @BotFather (у olegovic свой бот, токены не смешиваем).
+2. Установите бота:
+   ```
+   git clone https://github.com/olegoviccc/p2ptd-inventory ~/p2ptd-inventory
+   cd ~/p2ptd-inventory
+   python -m venv .venv && .venv/bin/pip install -r bot/requirements.txt
+   cp .env.example .env    # впишите TELEGRAM_BOT_TOKEN, INVENTREE_URL, BOT_ADMIN_IDS; BOT_RECOGNIZER=olegovic
+   ```
+3. Проверьте вручную: `.venv/bin/python -m bot`. В логе должна появиться строка `своя модель: qwen3.6-35b-a3b на http://127.0.0.1:8080/v1` и не должно быть предупреждений о распознавании.
+4. Включите сервис:
+   ```
+   cp systemd/p2ptd-bot.service ~/.config/systemd/user/
+   systemctl --user daemon-reload
+   systemctl --user enable --now p2ptd-bot
+   journalctl --user -u p2ptd-bot -f      # лог; он же в ~/p2ptd-inventory/bot_data/logs/bot.log
+   ```
+5. В Telegram: «🔑 Войти» → «➕ Добавить прибор».
+
+Бот работает, пока включён ПК, как и olegovic. Если нужен круглосуточный бот, его можно перенести на сервер (Docker, ниже) с `BOT_RECOGNIZER=claude`.
+
+## Запуск на сервере (Docker)
+
+Из корня репозитория:
+
+```
+docker build -f bot/Dockerfile -t p2ptd-bot .
+docker run -d --name p2ptd-bot --restart unless-stopped --env-file .env -v p2ptd-bot-data:/app/bot_data p2ptd-bot
+docker logs -f p2ptd-bot
+```
+
+Модель olegovic с сервера недоступна (она слушает только `127.0.0.1` на ПК), поэтому там нужен `BOT_RECOGNIZER=claude` или туннель до ПК. Claude API доступен только из поддерживаемых стран.
 
 Тесты: `pip install -r requirements-dev.txt && python -m pytest tests`.

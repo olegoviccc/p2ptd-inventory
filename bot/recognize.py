@@ -159,16 +159,38 @@ class LocalRecognizer:
 
     name = "local"
 
-    def __init__(self, base_url, model, api_key="", timeout=60):
-        self.url = base_url.rstrip("/") + "/chat/completions"
+    def __init__(self, base_url, model, api_key="", timeout=300, think=None):
+        self.base = base_url.rstrip("/")
+        self.url = self.base + "/chat/completions"
         self.model = model
+        self.think = think
         self.headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self._session = None
 
+    @property
+    def session(self):
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(timeout=self.timeout)
+        return self._session
+
     async def close(self):
         if self._session and not self._session.closed:
             await self._session.close()
+
+    async def check(self):
+        """Проверка при старте: сервер отвечает и знает модель. Возвращает текст проблемы или None."""
+        try:
+            async with self.session.get(self.base + "/models", headers=self.headers,
+                                        timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status >= 400:
+                    return f"{self.base}/models ответил {resp.status}"
+                ids = [m.get("id") for m in (await resp.json(content_type=None)).get("data", [])]
+        except (aiohttp.ClientError, TimeoutError, ValueError) as e:
+            return f"нет связи с {self.base}: {e}"
+        if ids and self.model not in ids:
+            return f"модели {self.model} нет на сервере (есть: {', '.join(ids[:8])})"
+        return None
 
     async def recognize(self, photos, categories, known_models=(), barcodes=()):
         started = time.monotonic()
@@ -178,13 +200,18 @@ class LocalRecognizer:
             "model": self.model,
             "temperature": 0,
             "messages": [{"role": "user", "content": content}],
+            "max_tokens": 4096,
+            # strict=False — как в olegovic-llm: llama-server и Ollama держат схему грамматикой
             "response_format": {"type": "json_schema",
-                                "json_schema": {"name": "recognition", "strict": True, "schema": schema(categories)}},
+                                "json_schema": {"name": "recognition", "strict": False, "schema": schema(categories)}},
         }
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(timeout=self.timeout)
+        if isinstance(self.think, bool):  # Qwen-шаблоны: размышления вкл/выкл
+            body["chat_template_kwargs"] = {"enable_thinking": self.think}
+        elif self.think:                  # gpt-oss: low / medium / high
+            body["reasoning_effort"] = self.think
+            body["chat_template_kwargs"] = {"reasoning_effort": self.think}
         try:
-            async with self._session.post(self.url, json=body, headers=self.headers) as resp:
+            async with self.session.post(self.url, json=body, headers=self.headers) as resp:
                 if resp.status >= 400:
                     raise RecognitionError(f"local: сервер ответил {resp.status}: {(await resp.text())[:200]}")
                 data = await resp.json(content_type=None)
@@ -212,6 +239,15 @@ class ChainRecognizer:
                 log.warning("распознавание не удалось: %s", e)
                 errors.append(str(e))
         raise RecognitionError("; ".join(errors))
+
+    async def check(self):
+        problems = {}
+        for engine in self.engines:
+            if hasattr(engine, "check"):
+                problem = await engine.check()
+                if problem:
+                    problems[engine.name] = problem
+        return problems
 
     async def close(self):
         for engine in self.engines:
