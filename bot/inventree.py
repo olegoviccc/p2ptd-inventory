@@ -188,12 +188,48 @@ class InvenTree:
             payload["batch"] = batch
         return await self.patch(f"/api/stock/{stock_pk}/", payload)
 
+    async def update_stock(self, stock_pk, **fields):
+        return await self.patch(f"/api/stock/{stock_pk}/", fields)
+
+    async def transfer(self, stock_pk, quantity, location_pk, note):
+        """Перемещение с записью в историю позиции."""
+        await self.post("/api/stock/transfer/", {
+            "items": [{"pk": stock_pk, "quantity": quantity}], "location": location_pk, "notes": note,
+        })
+
     async def delete_stock(self, stock_pk):
         await self.call("DELETE", f"/api/stock/{stock_pk}/")
 
     async def take_one(self, stock_pk, note):
         """Списывает 1 шт. с позиции (например, из райдера после сверки)."""
         await self.post("/api/stock/remove/", {"items": [{"pk": stock_pk, "quantity": 1}], "notes": note})
+
+    # --- этикетки (шаблоны и печать InvenTree)
+
+    async def label_templates(self, model_type="stockitem"):
+        return await self.get_all("/api/label/template/", model_type=model_type, enabled="true")
+
+    async def print_label(self, template_pk, items):
+        """Запускает отрисовку этикеток; возвращает DataOutput (результат готов, когда complete)."""
+        return await self.post("/api/label/print/", {"template": template_pk, "items": list(items)})
+
+    async def data_output(self, pk):
+        return await self.get(f"/api/data-output/{pk}/")
+
+    async def fetch_bytes(self, url):
+        """Файл с сервера InvenTree (например, готовый PDF этикетки) с авторизацией пользователя."""
+        url = url if url.startswith("http") else self.api.base + url
+        try:
+            async with self.api.session.get(url, headers={"Authorization": self.auth}) as resp:
+                if resp.status >= 400:
+                    raise InvenTreeError(resp.status, (await resp.text())[:300])
+                return await resp.read()
+        except aiohttp.ClientError as e:
+            raise InvenTreeError(0, f"нет связи с {self.api.base}: {e}") from None
+
+    async def attach_link(self, model_type, model_id, link, comment=""):
+        await self.post("/api/attachment/", {"model_type": model_type, "model_id": model_id, "link": link,
+                                             "comment": comment})
 
     async def attach(self, model_type, model_id, filename, data, comment=""):
         await self.post("/api/attachment/", {"model_type": model_type, "model_id": model_id, "comment": comment},

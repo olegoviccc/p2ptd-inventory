@@ -1,0 +1,28 @@
+# Откуда scraper берёт мануалы и фото моделей. Файл можно править без кода.
+#
+# manufacturers: сайты производителей. Их результаты в поиске идут первыми,
+#   а мануал или фото с них считаются самыми надёжными. Сайт, в адресе которого
+#   есть название бренда (например pioneerdj.com для Pioneer DJ), узнаётся и без списка.
+# retailers: магазины с хорошими фото товаров — запасной источник фото.
+# skip: сайты, которые не используем (каталоги мануалов со своими условиями,
+#   страницы без прямых файлов).
+
+manufacturers:
+  Pioneer DJ: [pioneerdj.com, alphatheta.com]
+  Yamaha: [yamaha.com, usa.yamaha.com, uk.yamaha.com, europe.yamaha.com]
+  Behringer: [behringer.com, musictribe.com, mediadl.musictribe.com]
+  Turbosound: [turbosound.com, musictribe.com, mediadl.musictribe.com]
+  Shure: [shure.com, pubs.shure.com]
+  L-Acoustics: [l-acoustics.com]
+  Audac: [audac.eu]
+  Wharfedale: [wharfedalepro.com]
+  Epson: [epson.com, epson.eu, epson.co.uk, files.support.epson.com]
+  BenQ: [benq.com, benq.eu]
+  ADJ: [adj.com, adj.eu]
+  Lab.Gruppen: [labgruppen.com]
+  Involight: [involight.com]
+  Arthur Forty: [arthurforty.com]
+
+retailers: [thomann.de, sweetwater.com, bhphotovideo.com, muztorg.ru, pop-music.ru]
+
+skip: [manualslib.com, manualzz.com, manua.ls, manualsdir.com, pdfmanuals.ru, scribd.com, youtube.com]

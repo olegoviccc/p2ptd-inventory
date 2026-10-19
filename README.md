@@ -2,7 +2,7 @@
 
 Скрипты для наполнения InvenTree (https://p2ptd-inventory.online), Telegram-бот для добавления оборудования по фото и сборка Android-приложения.
 
-**Как всё запустить по шагам: [docs/INSTALL.md](docs/INSTALL.md).** Устройство бота: [docs/BOT.md](docs/BOT.md), план работ: [docs/PLAN.md](docs/PLAN.md).
+**Как всё запустить по шагам: [docs/INSTALL.md](docs/INSTALL.md).** Устройство бота: [docs/BOT.md](docs/BOT.md), ночной поиск мануалов и фото: [docs/SCRAPER.md](docs/SCRAPER.md), план работ: [docs/PLAN.md](docs/PLAN.md).
 
 ## Подготовка (один раз)
 
@@ -24,6 +24,8 @@ python create_locations.py      # заведения и места хранен�
 python create_categories.py     # дерево категорий
 python import_stock.py --dry-run
 python import_stock.py          # оборудование из data/riders/*.yaml
+python renumber_serials.py      # один раз: номера P2PTD-00001 → P2PTD0001 (есть --dry-run)
+python install_label_template.py # шаблон этикетки P2PTD в InvenTree (нужен staff-токен)
 ```
 
 Все скрипты можно запускать повторно: то, что уже есть, пропускается.

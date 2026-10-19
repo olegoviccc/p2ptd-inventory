@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    paths: ["bot/**", "tests/**", "*.py", "requirements*.txt", ".github/workflows/tests.yml"]
+    paths: ["bot/**", "scraper/**", "tests/**", "data/sources.yaml", "labels/**", "*.py", "requirements*.txt", ".github/workflows/tests.yml"]
   pull_request:
 
 jobs:

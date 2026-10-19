@@ -12,8 +12,11 @@ TOKEN = "test-token"
 
 class FakeInvenTree:
     def __init__(self):
-        self.db = {k: [] for k in ("category", "location", "part", "company", "mpn", "stock", "attachment")}
+        self.db = {k: [] for k in ("category", "location", "part", "company", "mpn", "stock", "attachment",
+                                   "label", "output")}
+        self.printed = []  # вызовы /api/label/print/
         self.removed = []  # вызовы /api/stock/remove/
+        self.transfers = []  # вызовы /api/stock/transfer/
         self.part_images = {}
         self.requests = 0
         server = self
@@ -46,7 +49,10 @@ class FakeInvenTree:
                     for chunk in raw.split(b"--" + boundary)[1:-1]:
                         head, _, data = chunk.strip(b"\r\n").partition(b"\r\n\r\n")
                         name = re.search(rb'name="([^"]+)"', head).group(1).decode()
-                        fields[name] = data if b"filename=" in head else data.decode()
+                        filename = re.search(rb'filename="([^"]*)"', head)
+                        fields[name] = data if filename else data.decode()
+                        if filename:
+                            fields[name + "__filename"] = filename.group(1).decode()
                     return fields
                 return json.loads(raw) if raw else {}
 
@@ -61,6 +67,23 @@ class FakeInvenTree:
                     return self.send({"token": TOKEN})
                 if path == "/api/user/roles/":
                     return self.send({"is_superuser": True, "roles": {}})
+                if path == "/api/user/me/":
+                    return self.send({"username": "admin", "is_staff": True})
+                if path.startswith("/media/"):
+                    body = b"%PDF-1.7 fake label"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/pdf")
+                    self.end_headers()
+                    return self.wfile.write(body)
+                m = re.match(r"/api/data-output/(\d+)/$", path)
+                if m:  # как фоновая задача InvenTree: со второго запроса результат готов
+                    out = server.get("output", int(m.group(1)))
+                    out.update(complete=True, output=f"/media/data_output/label_{out['pk']}.pdf")
+                    return self.send(out)
+                if path == "/api/label/template/":
+                    items = [{k: v for k, v in t.items() if k != "template"} for t in server.db["label"]
+                             if t["model_type"] == q.get("model_type", t["model_type"])]
+                    return self.send({"count": len(items), "next": None, "results": items})
                 m = re.match(r"/api/(part|stock)/(\d+)/$", path)
                 if m:
                     item = server.get(m.group(1), int(m.group(2)))
@@ -69,9 +92,10 @@ class FakeInvenTree:
                     "/api/part/category/": "category", "/api/stock/location/": "location",
                     "/api/part/": "part", "/api/company/": "company",
                     "/api/company/part/manufacturer/": "mpn", "/api/stock/": "stock",
+                    "/api/attachment/": "attachment",
                 }[path]
                 items = list(server.db[table])
-                for key in ("part", "location", "serial", "batch"):
+                for key in ("part", "location", "serial", "batch", "model_type"):
                     if key in q:
                         items = [i for i in items if str(i.get(key)) == q[key]]
                 if "search" in q:
@@ -79,6 +103,9 @@ class FakeInvenTree:
                     items = [i for i in items if any(s in str(v).casefold() for v in i.values())]
                 if table == "stock":
                     items = [server.detail(i) for i in items]
+                # файлы отдаются ссылкой, как в InvenTree, а не байтами
+                items = [{k: (f"/media/{k}/{i.get(k + '__filename', 'file')}" if isinstance(v, bytes) else v)
+                          for k, v in i.items() if not k.endswith("__filename")} for i in items]
                 self.send({"count": len(items), "next": None, "results": items})
 
             def do_POST(self):
@@ -91,6 +118,19 @@ class FakeInvenTree:
                     "/api/company/part/manufacturer/": "mpn", "/api/stock/": "stock",
                     "/api/attachment/": "attachment",
                 }.get(self.path)
+                if self.path == "/api/label/template/":
+                    added = server.add("label", d)
+                    return self.send({k: v for k, v in added.items() if k != "template"}, 201)
+                if self.path == "/api/label/print/":
+                    if not any(t["pk"] == d["template"] for t in server.db["label"]):
+                        return self.send({"template": ["Invalid pk"]}, 400)
+                    server.printed.append(d)
+                    return self.send(server.add("output", {"complete": False, "output": None, "errors": None}), 201)
+                if self.path == "/api/stock/transfer/":
+                    for row in d["items"]:
+                        server.get("stock", row["pk"])["location"] = d["location"]
+                    server.transfers.append(d)
+                    return self.send({})
                 if self.path == "/api/stock/remove/":
                     for row in d["items"]:
                         item = server.get("stock", row["pk"])
@@ -106,6 +146,7 @@ class FakeInvenTree:
                 if table == "stock":
                     d.setdefault("serial", None)
                     d.setdefault("batch", None)
+                    d.setdefault("notes", "")
                 added = server.add(table, d)
                 self.send({k: v for k, v in added.items() if not isinstance(v, bytes)}, 201)
 
@@ -113,11 +154,15 @@ class FakeInvenTree:
                 server.requests += 1
                 if not self.authorized():
                     return self.send({"detail": "auth"}, 401)
-                m = re.match(r"/api/(part|stock)/(\d+)/$", self.path)
+                m = re.match(r"/api/(part|stock|label/template)/(\d+)/$", self.path)
                 kind, pk = m.group(1), int(m.group(2))
                 d = self.body()
+                if kind == "label/template":
+                    server.get("label", pk).update(d)
+                    return self.send({k: v for k, v in server.get("label", pk).items() if k != "template"})
                 if "image" in d:
                     server.part_images[pk] = d.pop("image")
+                    d["image"] = f"/media/part_images/part_{pk}.jpg"
                 if kind == "stock" and d.get("serial"):
                     if any(i.get("serial") == d["serial"] and i["pk"] != pk for i in server.db["stock"]):
                         return self.send({"serial": ["Serial number already exists"]}, 400)
@@ -129,7 +174,8 @@ class FakeInvenTree:
                 server.requests += 1
                 m = re.match(r"/api/stock/(\d+)/$", self.path)
                 server.db["stock"].remove(server.get("stock", int(m.group(1))))
-                self.send({}, 204)
+                self.send_response(204)  # как настоящий InvenTree: без тела
+                self.end_headers()
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
@@ -164,6 +210,7 @@ def seed(s):
                          "trackable": False, "purchaseable": True, "image": None})
     s.db["mpn"].append({"pk": 1, "part": 1, "manufacturer": 1, "MPN": "XDJ-1000MK2"})
     # позиция из райдера: 2 шт. без серийника
-    s.db["stock"].append({"pk": 1, "part": 1, "location": 11, "quantity": 2, "serial": None, "batch": None})
+    s.db["stock"].append({"pk": 1, "part": 1, "location": 11, "quantity": 2, "serial": None, "batch": None, "notes": ""})
     # уже выданный номер у другого прибора
-    s.db["stock"].append({"pk": 2, "part": 1, "location": 10, "quantity": 1, "serial": "P2PTD-00007", "batch": "X1"})
+    s.db["stock"].append({"pk": 2, "part": 1, "location": 10, "quantity": 1, "serial": "P2PTD-00007", "batch": "X1",
+                        "notes": ""})

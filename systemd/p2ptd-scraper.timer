@@ -1,0 +1,11 @@
+# Каждую ночь около 03:40; если ПК был выключен, прогон наверстается при следующем включении.
+[Unit]
+Description=p2ptd: ночной поиск мануалов и фото
+
+[Timer]
+OnCalendar=*-*-* 03:40
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

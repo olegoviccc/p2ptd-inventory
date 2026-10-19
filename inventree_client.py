@@ -18,6 +18,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 ENV_FILE = Path(__file__).resolve().parent / ".env"
@@ -80,6 +81,17 @@ def connect(args, ap):
     return Client(url, user=args.user, password=getpass.getpass("Пароль: "))
 
 
+def _multipart(fields, files):
+    boundary = uuid.uuid4().hex
+    parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+             for k, v in fields.items()]
+    for name, (filename, content) in files.items():
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                     f"Content-Type: application/octet-stream\r\n\r\n".encode() + content + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
 class Client:
     def __init__(self, base_url, token=None, user=None, password=None):
         self.base = base_url.rstrip("/")
@@ -89,13 +101,16 @@ class Client:
             raw = f"{user}:{password}".encode("utf-8")
             self.auth = "Basic " + base64.b64encode(raw).decode("ascii")
 
-    def request(self, method, path, payload=None, params=None):
+    def request(self, method, path, payload=None, params=None, files=None):
+        """files: {"поле": ("имя.html", bytes)} — тогда payload уходит полями multipart-формы."""
         url = path if path.startswith("http") else self.base + path
         if params:
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
         data = None
         headers = {"Authorization": self.auth, "Accept": "application/json"}
-        if payload is not None:
+        if files:
+            data, headers["Content-Type"] = _multipart(payload or {}, files)
+        elif payload is not None:
             data = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, headers=headers, method=method)

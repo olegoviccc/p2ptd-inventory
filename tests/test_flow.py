@@ -21,12 +21,13 @@ from aiogram.types import CallbackQuery, Chat, File, Message, PhotoSize, Update,
 from bot import logs, ui
 from bot.handlers import common, routers
 from bot.inventree import Api, Catalog
+from bot.labels import Labels
 from bot.middlewares import Context
 from bot.numbering import Numbering
 from bot.photos import PhotoBuffer
 from bot.recognize import Recognition
 from bot.storage import Storage
-from tests.fake_inventree import FakeInvenTree, seed
+from tests.fake_inventree import TOKEN, FakeInvenTree, seed
 
 USER = User(id=500, is_bot=False, first_name="Anna")
 ADMIN = 500
@@ -91,8 +92,8 @@ def qr_png(payload):
     return out.getvalue()
 
 
-async def scenario(tmp_path):
-    logs.setup(tmp_path, "INFO")
+def environment(tmp_path):
+    """Бот с поддельными Telegram и InvenTree: (server, tg, store, api, send)."""
     server = FakeInvenTree()
     seed(server)
     tg = FakeTelegram()
@@ -101,12 +102,22 @@ async def scenario(tmp_path):
     store = Storage(tmp_path / "bot.sqlite3")
     cfg = SimpleNamespace(allowed_ids=frozenset(), admin_ids=frozenset({ADMIN}), inventree_url=server.url)
     dp = Dispatcher(storage=MemoryStorage(), cfg=cfg, api=api, store=store, catalog=Catalog(),
-                    numbering=Numbering("P2PTD-", 5), recognizer=StaticRecognizer(), photos=PhotoBuffer())
+                    numbering=Numbering(), recognizer=StaticRecognizer(), photos=PhotoBuffer(),
+                    labels=Labels("P2PTD 62x29", poll=0))
     dp.message.outer_middleware(Context())
     dp.callback_query.outer_middleware(Context())
     dp.errors.register(common.on_error)
+    for r in routers():  # роутеры модульные: отцепляем от диспетчера предыдущего теста
+        if r.parent_router:
+            r.parent_router.sub_routers.remove(r)
+            r._parent_router = None
     dp.include_routers(*routers())
-    send = lambda update: dp.feed_update(bot, update)  # noqa: E731
+    return server, tg, store, api, lambda update: dp.feed_update(bot, update)
+
+
+async def scenario(tmp_path):
+    logs.setup(tmp_path, "INFO")
+    server, tg, store, api, send = environment(tmp_path)
 
     try:
         # без входа добавить нельзя
@@ -136,7 +147,7 @@ async def scenario(tmp_path):
 
         # сохранить
         await send(press(ui.SAVE))
-        assert any("✅ <b>P2PTD-00008</b>" in t for t in tg.texts())
+        assert any("✅ <b>P2PTD0008</b>" in t for t in tg.texts())
         assert server.get("stock", 1)["quantity"] == 1 and len(server.db["attachment"]) == 2
 
         # место запомнено: следующий /add сразу просит фото
@@ -146,7 +157,7 @@ async def scenario(tmp_path):
         # поиск кнопкой и просто текстом
         await send(message(ui.FIND))
         await send(message("VJXK012345"))
-        assert "P2PTD-00008" in tg.texts()[-1]
+        assert "P2PTD0008" in tg.texts()[-1]
 
         # поиск по фото QR-этикетки вне сценария
         await send(message("/cancel"))
@@ -157,15 +168,15 @@ async def scenario(tmp_path):
         # журнал для администратора
         await send(message(ui.JOURNAL))
         journal = tg.texts()[-1]
-        assert "добавил" in journal and "P2PTD-00008" in journal and "вошёл" in journal
+        assert "добавил" in journal and "P2PTD0008" in journal and "вошёл" in journal
 
         # протухший токен → просьба войти заново
         store.save(USER.id, "anna", "expired")
-        await send(message("P2PTD-00008"))
+        await send(message("P2PTD0008"))
         assert "Войдите заново" in tg.texts()[-1] and store.get(USER.id) is None
 
         log_text = (tmp_path / "logs" / "bot.log").read_text(encoding="utf-8")
-        assert "[user 500]" in log_text and "сохранено P2PTD-00008" in log_text
+        assert "[user 500]" in log_text and "сохранено P2PTD0008" in log_text
         assert "secret" not in log_text, "пароль не должен попадать в лог"
     finally:
         await api.close()
@@ -174,3 +185,56 @@ async def scenario(tmp_path):
 
 def test_full_scenario(tmp_path):
     asyncio.run(scenario(tmp_path))
+
+
+async def editing(tmp_path):
+    server, tg, store, api, send = environment(tmp_path)
+    store.save(USER.id, "anna", TOKEN)
+    try:
+        await send(message("X1"))  # поиск по заводскому S/N → карточка с кнопками
+        assert "P2PTD-00007" in tg.texts()[-1]
+
+        await send(press(tg.last_buttons()["📍 Переместить"]))
+        await send(press(tg.last_buttons()["Пешка"]))
+        await send(press(tg.last_buttons()["Диджейка"]))
+        assert server.get("stock", 2)["location"] == 11
+
+        await send(press(tg.last_buttons()["🔧 Статус"]))
+        await send(press(tg.last_buttons()["Повреждено"]))
+        assert server.get("stock", 2)["status"] == 55 and "Статус: Повреждено" in tg.texts()[-1]
+
+        await send(press(tg.last_buttons()["🏷 Заводской S/N"]))
+        await send(message("VJXK999"))
+        assert server.get("stock", 2)["batch"] == "VJXK999" and "VJXK999" in tg.texts()[-1]
+
+        await send(press(tg.last_buttons()["📝 Заметка"]))
+        await send(message("царапина на корпусе"))
+        assert "anna: царапина на корпусе" in server.get("stock", 2)["notes"]
+        assert "Заметка:" in tg.texts()[-1]
+
+        await send(press(tg.last_buttons()["📷 Фото"]))
+        tg.files["f9"] = qr_png("photo")
+        await send(message(photo="f9"))
+        assert len(server.db["attachment"]) == 1
+        await send(press(tg.last_buttons()["✅ Готово"]))
+
+        server.add("label", {"name": "P2PTD 62x29", "model_type": "stockitem", "enabled": "true"})
+        await send(press(tg.last_buttons()["🖨 Этикетка"]))
+        assert tg.sent[-1][0] == "SendDocument" and server.printed[-1]["items"] == [2]  # PDF от InvenTree
+
+        await send(message("X1"))  # S/N поменялся — старый уже не находится
+        assert "Ничего не нашёл" in tg.texts()[-1]
+        await send(message("P2PTD0007"))
+        await send(press(tg.last_buttons()["🗑 Удалить"]))
+        await send(press(tg.last_buttons()["🗑 Да, удалить"]))
+        assert "удалена" in tg.texts()[-1] and not any(i["pk"] == 2 for i in server.db["stock"])
+
+        actions = [e.action for e in store.recent_events()]
+        assert {"moved", "status", "batch", "note", "photo", "deleted"} <= set(actions)
+    finally:
+        await api.close()
+        server.close()
+
+
+def test_item_editing(tmp_path):
+    asyncio.run(editing(tmp_path))

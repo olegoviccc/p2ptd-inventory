@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from . import images
 from .inventree import InvenTreeError
@@ -191,9 +192,56 @@ async def lookup(it, numbering, text):
     """Позиции по внутреннему номеру, заводскому серийнику или произвольному поиску."""
     text = text.strip()
     if numbering.is_internal(text):
-        item = await it.find_by_serial(text.upper())
-        return [item] if item else []
+        item = await it.find_by_serial(numbering.normalize(text))
+        if item:
+            return [item]
+        # номер мог остаться в старом формате (P2PTD-00042): ищем по цифрам и сверяем число
+        n = numbering.parse(text)
+        found = await it.search_stock(f"{n:0{numbering.digits}d}")
+        return [i for i in found if numbering.parse(i.get("serial")) == n]
     by_batch, by_serial = await asyncio.gather(it.find_by_batch(text), it.find_by_serial(text))
     if by_batch or by_serial:
         return by_batch or [by_serial]
     return (await it.search_stock(text))[:10]
+
+
+# --- правка существующих позиций
+
+
+async def move(it, pk, location_pk, author):
+    item = await it.stock_item(pk)
+    if item.get("location") == location_pk:
+        return item
+    await it.transfer(pk, item["quantity"], location_pk, f"Перемещено через Telegram-бота: {author}")
+    return await it.stock_item(pk)
+
+
+async def set_status(it, pk, status):
+    await it.update_stock(pk, status=status)
+    return await it.stock_item(pk)
+
+
+async def set_batch(it, pk, batch):
+    """Заводской S/N (поле Batch). Тот же S/N у другой позиции этой модели не допускается."""
+    batch = batch.strip()
+    item = await it.stock_item(pk)
+    if batch:
+        same = [i for i in await it.find_by_batch(batch, item["part"]) if i["pk"] != pk]
+        if same:
+            raise ValueError(f"этот S/N уже у позиции {same[0].get('serial') or '#' + str(same[0]['pk'])}")
+    await it.update_stock(pk, batch=batch)
+    return await it.stock_item(pk)
+
+
+async def add_note(it, pk, text, author):
+    """Дописывает заметку с датой и автором, не затирая прежние."""
+    item = await it.stock_item(pk)
+    if "notes" not in item:
+        raise ValueError("InvenTree не отдал текущие заметки; чтобы их не затереть, заметка не сохранена")
+    line = f"{datetime.now():%d.%m.%Y %H:%M} {author}: {text.strip()}"
+    await it.update_stock(pk, notes="\n\n".join(p for p in ((item.get("notes") or "").strip(), line) if p))
+    return await it.stock_item(pk)
+
+
+async def add_photo(it, pk, photo, author):
+    await it.attach("stockitem", pk, photo.name, photo.raw, comment=f"Добавлено через бота: {author}")

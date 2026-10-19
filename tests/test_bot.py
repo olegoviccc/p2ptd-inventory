@@ -33,10 +33,11 @@ def run(coro):
 
 
 def test_numbering():
-    n = Numbering("P2PTD-", 5)
-    assert n.format(42) == "P2PTD-00042"
-    assert n.parse(" p2ptd-00042 ") == 42 and n.parse("P2P-00042") is None
-    assert n.highest([None, "SN123", "P2PTD-00007", "P2PTD-00012"]) == 12
+    n = Numbering()
+    assert n.format(42) == "P2PTD0042" and n.format(12345) == "P2PTD12345"
+    assert n.parse(" p2ptd0042 ") == 42 and n.parse("P2PTD-00042") == 42 and n.parse("P2P-0042") is None
+    assert n.normalize("p2ptd-00042") == "P2PTD0042" and n.normalize("SN-1") == "SN-1"
+    assert n.highest([None, "SN123", "P2PTD-00007", "P2PTD0012"]) == 12
     assert n.highest([]) == 0
 
 
@@ -66,7 +67,7 @@ def test_images():
     jpeg, codes = images.analyze(raw)
     assert jpeg[:2] == b"\xff\xd8" and [images.stockitem_from_qr(c) for c in codes] == [17]
     assert images.stockitem_from_qr("SN-123") is None
-    label = images.label_png(17, "P2PTD-00042", "Pioneer DJ XDJ-1000MK2", "Пешка / Диджейка")
+    label = images.label_png(17, "P2PTD0042", "Pioneer DJ XDJ-1000MK2", "Пешка / Диджейка")
     assert [images.stockitem_from_qr(c) for c in images.read_barcodes(label)] == [17]
 
 
@@ -217,7 +218,7 @@ def photo(name="p.jpg", raw=b"jpeg", barcodes=()):
 
 async def session(server):
     api = Api(server.url)
-    return api, api.client(TOKEN), Catalog(), Numbering("P2PTD-", 5)
+    return api, api.client(TOKEN), Catalog(), Numbering()
 
 
 def test_existing_model_from_rider(server):
@@ -234,13 +235,13 @@ def test_existing_model_from_rider(server):
         return result, again
 
     result, again = run(go())
-    assert result.number == "P2PTD-00008" and not result.warnings and not result.created_part
+    assert result.number == "P2PTD0008" and not result.warnings and not result.created_part
     item = server.get("stock", result.stock_pk)
-    assert (item["serial"], item["batch"], item["status"]) == ("P2PTD-00008", "VJXK012345", 10)
+    assert (item["serial"], item["batch"], item["status"]) == ("P2PTD0008", "VJXK012345", 10)
     assert server.get("stock", 1)["quantity"] == 1
     assert server.get("part", 1)["trackable"] is True
     assert len(server.db["attachment"]) == 2 and server.part_images[1] == b"jpeg2"
-    assert again.duplicate == "P2PTD-00008" and not again.can_save
+    assert again.duplicate == "P2PTD0008" and not again.can_save
     assert "Сохранить" not in str(card_kb(again))
 
 
@@ -296,23 +297,24 @@ def test_numbers_continue_without_refetch_and_resync_on_conflict(server):
         first = await service.save(it, catalog, numbering, draft, [], "anna")
         # кто-то занял следующий номер в обход бота
         server.db["stock"].append({"pk": 99, "part": 1, "location": 10, "quantity": 1,
-                                   "serial": "P2PTD-00009", "batch": None})
+                                   "serial": "P2PTD0009", "batch": None})
         draft, _ = await service.recognize(it, catalog, Static(serial="A2"), [photo()], 11, "x")
         second = await service.save(it, catalog, numbering, draft, [], "anna")
         await api.close()
         return first.number, second.number
-    assert run(go()) == ("P2PTD-00008", "P2PTD-00010")
+    assert run(go()) == ("P2PTD0008", "P2PTD0010")
 
 
 def test_lookup(server):
     async def go():
         api, it, _, numbering = await session(server)
-        out = (await service.lookup(it, numbering, "p2ptd-00007"), await service.lookup(it, numbering, "X1"),
-               await service.lookup(it, numbering, "nothing"))
+        out = (await service.lookup(it, numbering, "p2ptd0007"), await service.lookup(it, numbering, "P2PTD-00007"),
+               await service.lookup(it, numbering, "X1"), await service.lookup(it, numbering, "nothing"))
         await api.close()
         return out
-    by_number, by_batch, nothing = run(go())
-    assert by_number[0]["pk"] == 2 and by_batch[0]["pk"] == 2 and nothing == []
+    new_format, old_format, by_batch, nothing = run(go())
+    # в базе номер ещё в старом формате — находится при любом написании
+    assert new_format[0]["pk"] == old_format[0]["pk"] == by_batch[0]["pk"] == 2 and nothing == []
 
 
 def test_parse_edit():
@@ -377,3 +379,97 @@ def test_config_with_olegovic(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     cfg = config.load()
     assert cfg.recognizers == ("local", "claude") and cfg.local_llm_think is True
+
+
+def test_label_text_fits():
+    from PIL import Image, ImageDraw
+    draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    for number in ("P2PTD0008", "P2PTD-00008", "P2PTD123456"):
+        assert draw.textlength(number, font=images._fit(draw, number, 358, 64)) <= 358
+    lines = images._wrap(draw, "Behringer XENYX 1202SFX аналоговый пульт", images._font(32), 358)
+    assert all(draw.textlength(line, font=images._font(32)) <= 358 for line in lines) and len(lines) >= 2
+
+
+# --- правка позиций
+
+
+def test_item_edits(server):
+    async def go():
+        api, it, _, _ = await session(server)
+        moved = await service.move(it, 2, 11, "anna")
+        status = await service.set_status(it, 2, 55)
+        await service.add_note(it, 2, "царапина на корпусе", "anna")
+        noted = await service.add_note(it, 2, "проверено", "anna")
+        with pytest.raises(ValueError, match="уже у позиции"):
+            server.db["stock"].append({"pk": 50, "part": 1, "location": 10, "quantity": 1,
+                                       "serial": "P2PTD0050", "batch": "DUP", "notes": ""})
+            await service.set_batch(it, 2, "DUP")
+        batch = await service.set_batch(it, 2, "NEW-SN")
+        await service.add_photo(it, 2, service.Photo("p.jpg", b"jpeg", b"jpeg", []), "anna")
+        await api.close()
+        return moved, status, noted, batch
+
+    moved, status, noted, batch = run(go())
+    assert moved["location"] == 11 and server.transfers[-1]["location"] == 11
+    assert status["status"] == 55 and batch["batch"] == "NEW-SN"
+    assert "царапина на корпусе" in noted["notes"] and noted["notes"].rstrip().endswith("anna: проверено")
+    assert server.db["attachment"][-1]["model_id"] == "2"
+
+
+def test_renumber_plan():
+    from renumber_serials import plan
+    items = [{"pk": 1, "serial": "P2PTD-00008"}, {"pk": 2, "serial": "P2PTD0009"},
+             {"pk": 3, "serial": "P2PTD-00009"}, {"pk": 4, "serial": "SN1"}, {"pk": 5, "serial": None}]
+    changes, skipped = plan(items, Numbering())
+    assert changes == [(1, "P2PTD-00008", "P2PTD0008")] and skipped == [(3, "P2PTD-00009", "P2PTD0009")]
+
+
+def test_renumber_script(server, monkeypatch, capsys):
+    import renumber_serials
+    monkeypatch.setattr("sys.argv", ["renumber_serials.py", "--url", server.url, "--token", TOKEN])
+    renumber_serials.main()
+    assert server.get("stock", 2)["serial"] == "P2PTD0007" and "Переименовано: 1" in capsys.readouterr().out
+
+
+# --- этикетки InvenTree
+
+
+def test_qr_formats():
+    assert images.stockitem_from_qr("INV-SI42") == 42      # короткий формат InvenTree (по умолчанию)
+    assert images.stockitem_from_qr("SI7") == 7
+    assert images.stockitem_from_qr('{"stockitem": 5}') == 5  # JSON, как раньше рисовал бот
+    assert images.stockitem_from_qr("INV-SL3") is None       # это место, а не позиция
+    assert images.stockitem_from_qr("P2PTD0008") is None
+
+
+def test_install_label_template(server, monkeypatch, capsys):
+    import install_label_template
+    argv = ["install_label_template.py", "--url", server.url, "--token", TOKEN]
+    monkeypatch.setattr("sys.argv", argv)
+    install_label_template.main()
+    created = server.db["label"][0]
+    assert (created["name"], created["model_type"], created["width"], created["height"]) == \
+        ("P2PTD 62x29", "stockitem", "62", "29")
+    assert b"{% qrcode qr_data %}" in created["template"]
+    monkeypatch.setattr("sys.argv", argv + ["--width", "50", "--height", "25"])
+    install_label_template.main()  # повторный запуск обновляет тот же шаблон
+    assert len(server.db["label"]) == 1 and server.db["label"][0]["width"] == "50"
+    assert "обновить шаблон" in capsys.readouterr().out
+
+
+def test_label_from_inventree_and_fallback(server):
+    from bot.labels import Labels
+
+    async def go():
+        api, it, _, _ = await session(server)
+        fallback = await Labels("P2PTD 62x29", poll=0).make(it, 2, "P2PTD0007", "Pioneer", "Пешка")
+        server.add("label", {"name": "P2PTD 62x29", "model_type": "stockitem", "enabled": "true"})
+        rendered = await Labels("P2PTD 62x29", poll=0).make(it, 2, "P2PTD0007", "Pioneer", "Пешка")
+        own = await Labels("", poll=0).make(it, 2, "P2PTD0007", "Pioneer", "Пешка")
+        await api.close()
+        return fallback, rendered, own
+
+    fallback, rendered, own = run(go())
+    assert fallback[0] == "P2PTD0007.png" and fallback[1][:4] == b"\x89PNG"  # шаблона нет — рисует бот
+    assert rendered == ("P2PTD0007.pdf", b"%PDF-1.7 fake label") and server.printed[-1]["items"] == [2]
+    assert own[0].endswith(".png")  # BOT_LABEL_TEMPLATE пустой — только своя этикетка
