@@ -110,6 +110,8 @@ def local_llm_app(reply, seen):
         seen.append(await request.json())
         if reply is None:
             return web.Response(status=503)
+        if isinstance(reply, dict):  # полный choice: content + finish_reason
+            return web.json_response({"choices": [reply]})
         return web.json_response({"choices": [{"message": {"content": reply}}]})
     app = web.Application()
     app.router.add_post("/v1/chat/completions", completions)
@@ -150,6 +152,34 @@ def test_local_llm_think_and_check():
     assert problem is None and seen[0]["chat_template_kwargs"] == {"enable_thinking": False}
     problem, seen = run(with_local_llm(json.dumps(REC), go, think="low", model="nope"))
     assert seen[0]["reasoning_effort"] == "low" and "модели nope нет" in problem
+
+
+@pytest.mark.parametrize("reply", [
+    "<think>На шильдике XDJ-1000MK2, серийник VJXK012345…</think>\n" + json.dumps(REC),
+    "Вот результат:\n```json\n" + json.dumps(REC, ensure_ascii=False) + "\n```\nПроверьте серийник.",
+    "Ответ: " + json.dumps(REC) + " — готово {не json}",
+])
+def test_local_llm_tolerates_thinking_and_prose(reply):
+    rec, _ = run(with_local_llm(reply, lambda local: local.recognize([b"a"], CATS)))
+    assert rec.model == "XDJ-1000MK2" and rec.serial == "VJXK012345"
+
+
+def test_local_llm_thinking_off_by_default_and_length_error():
+    reply = {"message": {"content": "", "reasoning_content": "думаю…"}, "finish_reason": "length"}
+
+    async def go(local):
+        with pytest.raises(RecognitionError, match="лимит токенов"):
+            await local.recognize([b"a"], CATS)
+    _, seen = run(with_local_llm(reply, go))
+    assert seen[0]["chat_template_kwargs"] == {"enable_thinking": False} and seen[0]["max_tokens"] == 8192
+
+
+def test_local_llm_garbage_is_logged(caplog):
+    async def go(local):
+        with pytest.raises(RecognitionError, match="не JSON"):
+            await local.recognize([b"a"], CATS)
+    run(with_local_llm("не могу прочитать шильдик", go))
+    assert "не могу прочитать шильдик" in caplog.text
 
 
 def test_chain_falls_back_to_claude():

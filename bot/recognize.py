@@ -94,12 +94,30 @@ def prompt(categories, known_models, barcodes):
                          known=known, barcodes=", ".join(barcodes) or "none")
 
 
+def extract_json(text):
+    """Объект JSON из ответа модели: без размышлений <think>…</think>, обёртки ``` и пояснений вокруг."""
+    text = re.sub(r"<think>.*?(</think>|$)", "", text or "", flags=re.S).strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:  # первый целый объект в тексте
+        try:
+            return decoder.raw_decode(text, start)[0]
+        except ValueError:
+            start = text.find("{", start + 1)
+    raise ValueError("в ответе нет JSON")
+
+
 def finalize(text, photo_count, categories, engine, started):
     """JSON ответа модели → Recognition с проверкой значений (локальные модели схему не гарантируют)."""
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
     try:
-        data = json.loads(text)
+        data = extract_json(text)
     except ValueError as e:
+        log.warning("%s: не разобран ответ модели: %r", engine, (text or "")[:500])
         raise RecognitionError(f"{engine}: ответ не JSON") from e
     if not isinstance(data, dict):
         raise RecognitionError(f"{engine}: ответ не объект JSON")
@@ -200,14 +218,16 @@ class LocalRecognizer:
             "model": self.model,
             "temperature": 0,
             "messages": [{"role": "user", "content": content}],
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             # strict=False — как в olegovic-llm: llama-server и Ollama держат схему грамматикой
             "response_format": {"type": "json_schema",
                                 "json_schema": {"name": "recognition", "strict": False, "schema": schema(categories)}},
         }
-        if isinstance(self.think, bool):  # Qwen-шаблоны: размышления вкл/выкл
-            body["chat_template_kwargs"] = {"enable_thinking": self.think}
-        elif self.think:                  # gpt-oss: low / medium / high
+        if self.think is None or isinstance(self.think, bool):
+            # Qwen-шаблоны: прочитать шильдик размышления не нужны, без них быстрее и JSON не обрывается.
+            # Шаблоны без этой переменной её просто игнорируют.
+            body["chat_template_kwargs"] = {"enable_thinking": bool(self.think)}
+        else:                             # gpt-oss: low / medium / high
             body["reasoning_effort"] = self.think
             body["chat_template_kwargs"] = {"reasoning_effort": self.think}
         try:
@@ -218,9 +238,15 @@ class LocalRecognizer:
         except (aiohttp.ClientError, TimeoutError) as e:
             raise RecognitionError(f"local: нет связи с {self.url}") from e
         try:
-            text = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as e:
+            choice = data["choices"][0]
+            text = choice["message"].get("content") or ""
+        except (KeyError, IndexError, TypeError, AttributeError) as e:
             raise RecognitionError("local: неожиданный формат ответа") from e
+        if isinstance(text, list):  # некоторые серверы отдают content частями
+            text = "".join(part.get("text", "") for part in text if isinstance(part, dict))
+        if choice.get("finish_reason") == "length" and "{" not in text:
+            raise RecognitionError("local: модель упёрлась в лимит токенов, не дописав ответ "
+                                   "(обычно из-за размышлений: LOCAL_LLM_THINK=false)")
         return finalize(text, len(photos), categories, self.name, started)
 
 
