@@ -1,0 +1,6 @@
+aiogram>=3.31,<4
+anthropic>=1.15,<2
+zxing-cpp>=3.1
+rapidfuzz>=3.14
+qrcode[pil]>=8.2
+pillow>=13

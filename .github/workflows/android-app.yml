@@ -1,0 +1,145 @@
+# Сборка Android-приложения p2p-inventory из исходников InvenTree app.
+#
+# Запуск: Actions → «Android app» → Run workflow, указать версию InvenTree app.
+# Подписанный APK появится в Releases этого репозитория.
+#
+# Подпись берётся из секретов репозитория (Settings → Secrets and variables → Actions):
+#   ANDROID_KEYSTORE_BASE64   keystore (.jks) в base64
+#   ANDROID_KEYSTORE_PASSWORD пароль keystore
+#   ANDROID_KEY_ALIAS         алиас ключа
+#   ANDROID_KEY_PASSWORD      пароль ключа
+# Без секретов сборка идёт с одноразовым ключом только для проверки, APK не публикуется.
+
+name: Android app
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: "Версия InvenTree app (тег, например 0.25.2)"
+        required: true
+        default: "0.25.2"
+  push:
+    paths:
+      - ".github/workflows/android-app.yml"
+
+env:
+  APP_NAME: p2p-inventory
+  # Свой applicationId, чтобы приложение ставилось рядом с официальным InvenTree
+  APPLICATION_ID: online.p2ptd_inventory.app
+  DEFAULT_APP_VERSION: "0.25.2"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout InvenTree app
+        uses: actions/checkout@v4
+        with:
+          repository: inventree/inventree-app
+          ref: ${{ inputs.app_version || env.DEFAULT_APP_VERSION }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Read Flutter version
+        id: fvm
+        uses: kuhnroyal/flutter-fvm-config-action@v2
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.fvm.outputs.FLUTTER_VERSION }}
+          channel: ${{ steps.fvm.outputs.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.11.1
+
+      - name: Apply p2p-inventory branding
+        run: |
+          set -euo pipefail
+          manifest=android/app/src/main/AndroidManifest.xml
+          gradle=android/app/build.gradle
+
+          # Название под иконкой и в списке приложений
+          sed -i "s/android:label=\"InvenTree\"/android:label=\"${APP_NAME}\"/" "$manifest"
+          # Название в переключателе задач
+          sed -i "s/onGenerateTitle: (BuildContext context) => \"InvenTree\"/onGenerateTitle: (BuildContext context) => \"${APP_NAME}\"/" lib/main.dart
+          # Свой applicationId (namespace с кодом Kotlin не трогаем)
+          sed -i "s/applicationId \"inventree.inventree_app\"/applicationId \"${APPLICATION_ID}\"/" "$gradle"
+          # Не отправлять отчёты об ошибках в Sentry разработчиков InvenTree
+          sed -i -z 's/String SENTRY_DSN_KEY =\s*"[^"]*";/String SENTRY_DSN_KEY = "";/' lib/dsn.dart
+
+          # Проверка, что все замены применились (после обновления InvenTree app файлы могут измениться)
+          grep -q "android:label=\"${APP_NAME}\"" "$manifest"
+          grep -q "=> \"${APP_NAME}\"" lib/main.dart
+          grep -q "applicationId \"${APPLICATION_ID}\"" "$gradle"
+          grep -q 'SENTRY_DSN_KEY = "";' lib/dsn.dart
+          git diff --stat
+
+      - name: Prepare signing key
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Секреты подписи не заданы: сборка с одноразовым ключом, APK не будет опубликован"
+            KEYSTORE_PASSWORD=throwaway KEY_PASSWORD=throwaway KEY_ALIAS=throwaway
+            keytool -genkeypair -keystore "$keystore" -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 \
+              -validity 1 -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" -dname "CN=throwaway"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat > android/key.properties <<EOF
+          storeFile=$keystore
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Collect translations
+        run: cd lib/l10n && python3 collect_translations.py
+
+      - name: Build APK
+        run: |
+          flutter pub get
+          flutter build apk --release --no-tree-shake-icons
+
+      - name: Rename APK
+        id: apk
+        run: |
+          version=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
+          name="${APP_NAME}-${version}.apk"
+          mv build/app/outputs/flutter-apk/app-release.apk "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          rm -f android/key.properties
+
+      - name: Publish release
+        if: steps.signing.outputs.signed == 'true' && github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-${{ steps.apk.outputs.version }}-${{ github.run_number }}
+          name: ${{ env.APP_NAME }} ${{ steps.apk.outputs.version }}
+          body: |
+            Сборка InvenTree app ${{ steps.apk.outputs.version }} под названием ${{ env.APP_NAME }}.
+            Установка: скачать APK на телефон и открыть (разрешить установку из неизвестных источников).
+          files: ${{ steps.apk.outputs.name }}
+          repository: ${{ github.repository }}

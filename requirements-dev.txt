@@ -1,0 +1,3 @@
+-r requirements.txt
+-r bot/requirements.txt
+pytest>=8
