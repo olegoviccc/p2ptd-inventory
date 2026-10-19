@@ -33,6 +33,8 @@ class Config:
     brave_key: str
     telegram_token: str
     admin_ids: frozenset
+    verify: bool              # проверять находки моделью
+    llm: dict | None          # url, model, think — модель для проверки (из olegovic-llm или LOCAL_LLM_*)
 
 
 def load():
@@ -48,6 +50,18 @@ def load():
     if mode not in ("file", "link"):
         raise SystemExit(f"SCRAPER_MANUAL_MODE: file или link (сейчас {mode})")
     brave_key = env("BRAVE_API_KEY", "")
+    verify = env("SCRAPER_VERIFY", "olegovic")
+    if verify not in ("olegovic", "local", "off"):
+        raise SystemExit(f"SCRAPER_VERIFY: olegovic, local или off (сейчас {verify})")
+    llm = None
+    if verify != "off":
+        # модель для проверки: та же, что у olegovic-llm, или своя через LOCAL_LLM_URL / LOCAL_LLM_MODEL
+        url, model, think = env("LOCAL_LLM_URL", ""), env("LOCAL_LLM_MODEL", ""), None
+        if verify == "olegovic" and olegovic.config_path().exists():
+            found = olegovic.load()
+            url, model, think = url or found.url, model or found.model, found.think
+        if url and model:
+            llm = {"url": url, "model": model, "think": think, "timeout": float(env("LOCAL_LLM_TIMEOUT", "300"))}
     return Config(
         inventree_url=env("INVENTREE_URL").rstrip("/"),
         inventree_token=env("INVENTREE_TOKEN"),
@@ -64,4 +78,6 @@ def load():
         brave_key=brave_key,
         telegram_token=env("TELEGRAM_BOT_TOKEN", ""),
         admin_ids=_ids("BOT_ADMIN_IDS"),
+        verify=verify != "off" and llm is not None,
+        llm=llm,
     )

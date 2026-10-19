@@ -6,9 +6,10 @@
   python -m scraper                найти и приложить (по умолчанию до 20 моделей за запуск)
   python -m scraper --part 42      только одна деталь (не ждать 30 дней после неудачи)
   python -m scraper --only photos  только фото (или --only manuals)
+  python -m scraper --nightly      ночной запуск по таймеру: пропускается, если ночной поиск выключен в боте
 
-Обычно запускается ночью таймером systemd (systemd/p2ptd-scraper.timer).
-Настройки — SCRAPER_* в .env (см. .env.example).
+Управлять удобнее из бота: «🗂 Каталог» (для администраторов).
+Настройки — SCRAPER_* в .env (см. .env.example) и переключатели в боте.
 """
 
 import argparse
@@ -21,11 +22,8 @@ from bot.inventree import Api
 from bot.storage import Storage
 
 from . import config
-from .run import format_report, run, targets, Report
-from .search import BraveSearch, DDGSearch
-from .sources import Sources
-from .state import State
-from .web import Web
+from .engine import Busy, build
+from .run import format_report
 
 log = logging.getLogger("scraper")
 
@@ -48,27 +46,29 @@ async def main(args):
     cfg = config.load()
     logs.setup(cfg.data_dir, cfg.log_level, filename="scraper.log")
     api = Api(cfg.inventree_url, timeout=120)
-    it = api.client(cfg.inventree_token)
-    web = Web()
+    scraper = build(cfg, api, Storage(Path(cfg.data_dir) / "bot.sqlite3"))
     try:
         if args.stats:
-            report = Report()
-            await targets(it, report)
-            print(format_report(report, dry_run=True))
+            print(format_report(await scraper.stats(), dry_run=True))
             return
-        search = BraveSearch(cfg.brave_key, web.session) if cfg.search == "brave" else DDGSearch()
-        log.info("старт: поиск %s, мануалы %s (папка olegovic: %s), фото %s, до %d моделей",
-                 search.name, cfg.manuals, cfg.olegovic_manuals, cfg.photos, args.limit or cfg.limit)
-        report = await run(cfg, it, search, web, Sources.load(), State(Path(cfg.data_dir) / "scraper.sqlite3"),
-                           None if args.dry_run else Storage(Path(cfg.data_dir) / "bot.sqlite3"),
-                           only=args.only, limit=args.limit, dry_run=args.dry_run,
-                           part_pk=args.part, force=bool(args.part))
+        settings = scraper.settings()
+        if args.nightly and not settings["nightly"]:
+            log.info("ночной поиск выключен в боте («🗂 Каталог»), пропускаю")
+            return
+        log.info("старт: поиск %s, настройки %s, папка olegovic: %s", scraper.search.name, settings,
+                 cfg.olegovic_manuals)
+        try:
+            report = await scraper.run("ночь" if args.nightly else "вручную", dry_run=args.dry_run,
+                                       limit=args.limit, only=args.only, part_pk=args.part, force=bool(args.part))
+        except Busy as e:
+            log.info("не запускаю: %s", e)
+            return
         text = format_report(report, args.dry_run)
         print(text.replace("<b>", "").replace("</b>", ""))
-        if not args.dry_run and (report.manuals or report.photos or report.errors):
-            await notify(cfg, web, text)
+        if not args.dry_run and (report.manuals or report.photos or report.review or report.errors):
+            await notify(cfg, scraper.web, text)
     finally:
-        await web.close()
+        await scraper.close()
         await api.close()
 
 
@@ -79,6 +79,7 @@ def cli():
     ap.add_argument("--limit", type=int, help="сколько моделей обработать за запуск")
     ap.add_argument("--only", choices=["manuals", "photos"], help="только мануалы или только фото")
     ap.add_argument("--part", type=int, help="pk одной детали в InvenTree")
+    ap.add_argument("--nightly", action="store_true", help="запуск по таймеру (учитывает выключатель в боте)")
     asyncio.run(main(ap.parse_args()))
 
 

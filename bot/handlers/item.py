@@ -163,6 +163,64 @@ async def label(call: CallbackQuery, callback_data: ui.Item, it, labels):
     await call.message.answer_document(BufferedInputFile(data, filename), caption=item["serial"])
 
 
+# --- мануал модели
+
+
+@router.callback_query(is_item("manual"))
+async def manual(call: CallbackQuery, callback_data: ui.Item, it, scraper=None):
+    item = await it.stock_item(callback_data.pk)
+    manuals = await service.part_manuals(it, item["part"])
+    await call.answer()
+    if not manuals:
+        rows = [("🔎 Найти мануал и фото сейчас", ui.Item(action="scrape", pk=item["pk"]))] if scraper else []
+        return await call.message.answer("📘 Мануала у этой модели пока нет. Его ищет ночной поиск каталога.",
+                                         reply_markup=ui.buttons(*rows, ui.back_to_item(item["pk"])))
+    for a in manuals[:3]:
+        if a.get("link") and not a.get("attachment"):
+            await call.message.answer(f"📘 {ui.esc(a.get('comment') or 'Руководство')}\n{a['link']}")
+            continue
+        data = await it.fetch_bytes(a["attachment"])
+        name = a.get("filename") or a["attachment"].rsplit("/", 1)[-1] or "manual.pdf"
+        await call.message.answer_document(BufferedInputFile(data, name), caption="📘 " + (a.get("comment") or "")[:200])
+
+
+@router.callback_query(is_item("scrape"))
+async def scrape_now(call: CallbackQuery, callback_data: ui.Item, bot: Bot, it, user, scraper=None):
+    if scraper is None:
+        return await call.answer("Поиск мануалов не настроен", show_alert=True)
+    if scraper.running:
+        return await call.answer("Сейчас идёт поиск по каталогу, попробуйте позже", show_alert=True)
+    item = await it.stock_item(callback_data.pk)
+    from .catalog import in_background
+    in_background(scrape_part(bot, call.message.chat.id, scraper, item, user.username))
+    await call.answer("Ищу, пришлю результат")
+
+
+async def scrape_part(bot, chat_id, scraper, item, author):
+    from scraper.engine import Busy
+    name = (item.get("part_detail") or {}).get("full_name") or f"#{item['part']}"
+    try:
+        report = await scraper.run(f"бот: {author}", part_pk=item["part"], force=True)
+    except Busy as e:
+        return await bot.send_message(chat_id, f"Не запущено: {e}.")
+    except Exception as e:  # noqa: BLE001 — фоновая задача: сообщаем, а не роняем бота
+        log.exception("поиск для одной модели упал")
+        return await bot.send_message(chat_id, f"⚠️ Поиск прервался: {ui.esc(e)}")
+    if report.no_model and not report.total:
+        return await bot.send_message(chat_id, f"У «{ui.esc(name)}» нет производителя и кода модели — искать нечего.")
+    found = [w for w, items in (("мануал", report.manuals), ("фото", report.photos)) if items]
+    lines = [f"🔎 <b>{ui.esc(name)}</b>"]
+    if found:
+        lines.append("Нашлось и приложено: " + ", ".join(found))
+    if report.review:
+        lines.append("На проверке у администратора: " + ", ".join(w for _, w in report.review))
+    if report.not_found:
+        lines.append("Не нашлось: " + ", ".join(w for _, w in report.not_found))
+    if report.total == 0:
+        lines.append("Мануал и фото у модели уже есть.")
+    await bot.send_message(chat_id, "\n".join(lines), reply_markup=ui.buttons(ui.back_to_item(item["pk"])))
+
+
 # --- удаление
 
 

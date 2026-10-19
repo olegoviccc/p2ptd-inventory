@@ -14,14 +14,15 @@ PROFILE = "👤 Профиль"
 HELP = "❓ Помощь"
 JOURNAL = "📜 Журнал"
 LOGIN = "🔑 Войти"
-MENU_TEXTS = {ADD, FIND, PLACE, PROFILE, HELP, JOURNAL, LOGIN}
+CATALOG = "🗂 Каталог"
+MENU_TEXTS = {ADD, FIND, PLACE, PROFILE, HELP, JOURNAL, LOGIN, CATALOG}
 
 
 def main_menu(logged_in, is_admin=False):
     if not logged_in:
         rows = [[LOGIN], [HELP]]
     else:
-        rows = [[ADD, FIND], [PLACE, PROFILE], [HELP, JOURNAL] if is_admin else [HELP]]
+        rows = [[ADD, FIND], [PLACE, PROFILE], [HELP]] + ([[JOURNAL, CATALOG]] if is_admin else [])
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in row] for row in rows],
                                resize_keyboard=True, is_persistent=True)
 
@@ -45,6 +46,13 @@ class Item(CallbackData, prefix="it"):
     action: str
     pk: int
     value: int = 0
+
+
+class Scr(CallbackData, prefix="sc"):
+    """Каталог (scraper): home, run, dry, toggle (key), reviews, rev (value=id), acc, rej."""
+    action: str
+    value: int = 0
+    key: str = ""
 
 
 RECOGNIZE, SAVE, EDIT, CATEGORY, DROP, CHANGE_PLACE, CANCEL, LOGOUT = (
@@ -122,7 +130,7 @@ def item_kb(item):
     rows = [
         [("📍 Переместить", Item(action="move", pk=pk)), ("🔧 Статус", Item(action="status", pk=pk))],
         [("🏷 Заводской S/N", Item(action="batch", pk=pk)), ("📝 Заметка", Item(action="note", pk=pk))],
-        [("📷 Фото", Item(action="photo", pk=pk))]
+        [("📷 Фото", Item(action="photo", pk=pk)), ("📘 Мануал", Item(action="manual", pk=pk))]
         + ([("🖨 Этикетка", Item(action="label", pk=pk))] if item.get("serial") else []),
         ("🗑 Удалить", Item(action="delete", pk=pk)),
     ]
@@ -226,3 +234,56 @@ def journal_text(events):
         lines.append(f"<code>{e.ts[5:16].replace('T', ' ')}</code> {esc(e.username or e.tg_id)} "
                      f"{EVENT_NAMES.get(e.action, e.action)} {esc(what)}")
     return "\n".join(lines)
+
+
+# --- каталог (ночной поиск мануалов и фото)
+
+SETTING_NAMES = {"nightly": "🌙 Ночью", "manuals": "📘 Мануалы", "photos": "🖼 Фото", "verify": "🤖 Проверка моделью"}
+SOURCE_NAMES = {"olegovic": "olegovic-llm", "manufacturer": "сайт производителя", "retailer": "магазин",
+                "search": "поиск"}
+
+
+def catalog_text(stats, settings, last_run, progress, reviews, model_name):
+    lines = ["🗂 <b>Каталог: мануалы и фото моделей</b>",
+             f"Моделей: {stats.parts} (без кода модели: {stats.no_model})",
+             f"Без мануала: <b>{stats.missing_manual}</b>, без фото: <b>{stats.missing_photo}</b>"]
+    if reviews:
+        lines.append(f"📥 Ждут проверки: <b>{reviews}</b>")
+    if progress is not None:
+        lines.append(f"\n⏳ Идёт поиск: {progress.checked} из {progress.total} моделей, "
+                     f"найдено мануалов {len(progress.manuals)}, фото {len(progress.photos)}")
+    elif last_run:
+        lines.append(f"\nПоследний прогон ({esc(last_run['trigger'])}): {last_run['finished'][5:16].replace('T', ' ')} UTC — "
+                     f"мануалов {last_run.get('manuals', 0)}, фото {last_run.get('photos', 0)}, "
+                     f"на проверку {last_run.get('review', 0)}, не нашлось {last_run.get('not_found', 0)}")
+    flags = ", ".join(f"{name}: {'вкл' if settings[key] else 'выкл'}" for key, name in SETTING_NAMES.items())
+    lines.append(f"\n{flags}; за прогон до {settings['limit']} моделей")
+    lines.append(f"Модель для проверки: {esc(model_name) if model_name else 'не настроена'}")
+    return "\n".join(lines)
+
+
+def catalog_kb(settings, running, reviews, can_verify):
+    rows = []
+    if not running:
+        rows.append([(f"▶️ Запустить ({settings['limit']})", Scr(action="run")),
+                     ("🧪 Без записи (3)", Scr(action="dry"))])
+    if reviews:
+        rows.append((f"📥 На проверку ({reviews})", Scr(action="reviews")))
+    toggles = [(f"{'✅' if settings[k] else '⬜'} {name}", Scr(action="toggle", key=k))
+               for k, name in SETTING_NAMES.items() if k != "verify" or can_verify]
+    rows += _pairs(toggles)
+    rows.append([("➖ 5", Scr(action="limit", value=-5)), ("➕ 5", Scr(action="limit", value=5)),
+                 ("🔄 Обновить", Scr(action="home"))])
+    return buttons(*rows)
+
+
+def review_caption(r):
+    what = "мануал" if r.kind == "manual" else "фото"
+    return (f"📥 <b>{esc(r.part_name)}</b> — {what}?\n"
+            f"Источник: {SOURCE_NAMES.get(r.source, r.source)}{' — ' + esc(r.url) if r.url else ''}\n"
+            f"Модель: {esc(r.reason) or 'без пояснения'}")
+
+
+def review_kb(review_id):
+    return buttons([("✅ Принять", Scr(action="acc", value=review_id)), ("❌ Отклонить", Scr(action="rej", value=review_id))],
+                   ("⬅️ К каталогу", Scr(action="home")))

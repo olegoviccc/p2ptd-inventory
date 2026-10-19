@@ -33,10 +33,10 @@ _routers = None
 def routers():
     global _routers
     if _routers is None:
-        from . import add, auth, common, item, lookup
+        from . import add, auth, catalog, common, item, lookup
 
-        for r in (add.router, item.router, lookup.router):
+        for r in (add.router, item.router, catalog.router, lookup.router):
             r.message.middleware(RequireLogin())
             r.callback_query.middleware(RequireLogin())
-        _routers = [common.router, auth.router, add.router, item.router, lookup.router]
+        _routers = [common.router, auth.router, add.router, item.router, catalog.router, lookup.router]
     return _routers
