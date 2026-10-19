@@ -232,7 +232,7 @@ cd ~/p2ptd-inventory
 | Что | Команда |
 |---|---|
 | Лог в реальном времени | `journalctl --user -u p2ptd-bot -f` |
-| Лог-файл | `~/p2ptd-inventory/bot_data/logs/bot.log` |
+| Лог-файл | `~/p2ptd-inventory/bot_data/logs/bot.log`, каталог — `scraper.log` рядом. Из бота: «🐞 Диагностика» |
 | Перезапуск после правки `.env` | `systemctl --user restart p2ptd-bot` |
 | Обновление | `cd ~/p2ptd-inventory && git pull && .venv/bin/pip install -r bot/requirements.txt && systemctl --user restart p2ptd-bot` |
 | Остановить | `systemctl --user stop p2ptd-bot` |
@@ -243,6 +243,8 @@ cd ~/p2ptd-inventory
 ---
 
 ## Если что-то не так
+
+**Как сообщить о проблеме.** Нажмите в боте «🐞 Диагностика» (кнопка администраторов, или команда `/diag`) и перешлите присланный файл разработчику. Допишите словами: что делали, что ожидали и что получилось, примерное время. В файле есть версия, настройки, проверка связи с InvenTree и моделью, журнал и логи с полными ошибками. Токены и ключи из него вырезаны. Если бот не отвечает совсем, пришлите вывод `journalctl --user -u p2ptd-bot -n 200 --no-pager`.
 
 | Признак | Что сделать |
 |---|---|

@@ -12,11 +12,12 @@ from bot.matching import norm
 
 from .search import SearchError
 from .verify import MATCH, MISMATCH, NoVerifier
-from .web import FetchError, page_image
+from .web import FetchError, is_html, page_image, pdf_links
 
 log = logging.getLogger(__name__)
 
 MIN_PDF_BYTES = 30_000
+MAX_MANUAL_DOWNLOADS = 15  # страниц и PDF на одну модель за прогон
 MIN_IMAGE_SIDE = 300
 MAX_IMAGE_SIDE = 1600
 
@@ -45,7 +46,9 @@ class Pick:
             return found
         if verdict.verdict == MISMATCH:
             log.info("модель отклонила %s: %s", found.url or found.filename, verdict.reason)
-        elif self.review is None:
+            return None
+        log.info("модель не уверена в %s: %s", found.url or found.filename, verdict.reason)
+        if self.review is None:
             found.status = "review"
             self.review = found
         return None
@@ -122,8 +125,13 @@ async def find_manual(part, search, web, sources, olegovic_folder=None, use_sear
     filename = f"{safe_name(model)}.pdf"
 
     async def check(data, url, source):
+        where = url or "папка olegovic"
         text = pdf_text(data)
-        if not text or norm(model) not in norm(text):
+        if text is None:
+            log.info("мануал %s: %s — не PDF или меньше 30 КБ", model, where)
+            return None
+        if norm(model) not in norm(text):
+            log.info("мануал %s: %s — в тексте первых страниц нет кода модели", model, where)
             return None
         return pick.judge(Found(data, url, source, filename), await pick.verifier.manual(text, part))
 
@@ -135,33 +143,96 @@ async def find_manual(part, search, web, sources, olegovic_folder=None, use_sear
     if not use_search:
         return pick.review
 
-    queries = [f"{mfr} {model} manual pdf"] + [f"{model} manual site:{d}" for d in sources.domains(mfr)[:2]]
-    seen, results = set(rejected), []
-    for query in queries:
-        try:
-            for r in await search.text(query, 10):
-                if r["url"] and r["url"] not in seen and not sources.is_skipped(r["url"]):
-                    seen.add(r["url"])
-                    results.append(r)
-        except SearchError as e:
-            log.warning("поиск «%s»: %s", query, e)
+    seen = set(rejected)
+    budget = [MAX_MANUAL_DOWNLOADS]  # сколько файлов и страниц ещё можно скачать для этой модели
 
-    def score(r):
-        url = r["url"].lower().split("?")[0]
-        return (not sources.is_manufacturer(r["url"], mfr), not url.endswith(".pdf"),
-                not mentions(model, r["url"], r["title"]), "manual" not in (url + r["title"].lower()))
-
-    for r in sorted(results, key=score)[:6]:
+    async def fetch(url, max_bytes=None):
+        if budget[0] <= 0:
+            return None, ""
+        budget[0] -= 1
         try:
-            data, _ = await web.get(r["url"])
+            return await web.get(url, max_bytes)
         except FetchError as e:
-            log.info("мануал %s: %s", model, e)
-            continue
-        source = "manufacturer" if sources.is_manufacturer(r["url"], mfr) else "search"
-        found = await check(data, r["url"], source)
-        if found:
-            return found
-    return pick.review
+            log.info("мануал %s: не скачался %s", model, e)
+            return None, ""
+
+    async def try_pdf(url, page=None):
+        source = "manufacturer" if sources.is_manufacturer(url, mfr) or (page and sources.is_manufacturer(page, mfr)) \
+            else "search"
+        data, _ = await fetch(url)
+        return data and await check(data, url, source)
+
+    async def try_page(url, html):
+        """Страница товара или поддержки: мануал обычно лежит на ней ссылкой."""
+        links = [(u, t) for u, t in pdf_links(html.decode("utf-8", "replace"), url)
+                 if u not in seen and not sources.is_skipped(u)]
+        ranked = sorted(links, key=lambda link: manual_link_score(link, model))
+        log.info("мануал %s: %s — страница, ссылок на PDF %d%s", model, url, len(links),
+                 f", пробую: {', '.join(u for u, _ in ranked[:3])}" if ranked else "")
+        for link, _ in ranked[:3]:
+            seen.add(link)
+            found = await try_pdf(link, page=url)
+            if found:
+                return found
+        return None
+
+    async def search_round(queries):
+        results = []
+        for query in queries:
+            try:
+                for r in await search.text(query, 10):
+                    if r["url"] and r["url"] not in seen and not sources.is_skipped(r["url"]):
+                        seen.add(r["url"])
+                        results.append(r)
+            except SearchError as e:
+                log.warning("поиск «%s»: %s", query, e)
+        log.info("мануал %s: %d результатов поиска по запросам %s", model, len(results), queries)
+
+        def score(r):
+            url = r["url"].lower().split("?")[0]
+            return (not sources.is_manufacturer(r["url"], mfr), not url.endswith(".pdf"),
+                    not mentions(model, r["url"], r["title"]), "manual" not in (url + r["title"].lower()))
+
+        for r in sorted(results, key=score)[:6]:
+            data, ctype = await fetch(r["url"])
+            if data is None:
+                continue
+            if is_html(data, ctype):
+                if sources.is_manufacturer(r["url"], mfr) or mentions(model, r["url"], r["title"]):
+                    found = await try_page(r["url"], data)
+                    if found:
+                        return found
+                else:
+                    log.info("мануал %s: %s — страница не производителя и без кода модели, пропускаю", model, r["url"])
+                continue
+            source = "manufacturer" if sources.is_manufacturer(r["url"], mfr) else "search"
+            found = await check(data, r["url"], source)
+            if found:
+                return found
+        return None
+
+    found = await search_round([f"{mfr} {model} manual pdf"]
+                               + [f"{model} manual site:{d}" for d in sources.domains(mfr)[:2]])
+    if not found and not pick.review:  # запасные запросы: другие слова, русские сайты
+        found = await search_round([f"{mfr} {model} user manual", f"{mfr} {model} инструкция pdf"])
+    if not found and budget[0] <= 0:
+        log.info("мануал %s: исчерпан лимит в %d загрузок", model, MAX_MANUAL_DOWNLOADS)
+    return found or pick.review
+
+
+MANUAL_WORDS = ("manual", "user", "owner", "operat", "instruction", "guide", "handbuch", "bedienungs",
+                "инструкц", "руководств")
+NOT_MANUAL_WORDS = ("datasheet", "data sheet", "data_sheet", "spec", "brochure", "catalog", "declaration",
+                    "conformity", "doc_", "rohs", "ce_", "warranty", "service", "price", "dimension", "cad")
+
+
+def manual_link_score(link, model):
+    """Меньше — лучше. На странице товара все ссылки про эту модель, поэтому сначала отличаем
+    мануал от даташита и декларации, а код модели в названии решает только при равенстве."""
+    url, text = link
+    hay = (url + " " + text).lower()
+    return (any(w in hay for w in NOT_MANUAL_WORDS), not any(w in hay for w in MANUAL_WORDS),
+            not mentions(model, url, text))
 
 
 # --- фото
@@ -186,6 +257,7 @@ async def find_photo(part, search, web, sources, verifier=None, rejected=frozens
             return None
         jpeg = await _image_at(web, image_url)
         if not jpeg:
+            log.info("фото %s: %s — не картинка или меньше %d px", model, image_url, MIN_IMAGE_SIDE)
             return None
         return pick.judge(Found(jpeg, page_url, source, name), await pick.verifier.photo(jpeg, part))
 
@@ -197,6 +269,7 @@ async def find_photo(part, search, web, sources, verifier=None, rejected=frozens
                       if sources.is_manufacturer(r["url"], mfr) and mentions(model, r["url"], r["title"])]
         except SearchError as e:
             log.warning("поиск «%s»: %s", query, e)
+    log.info("фото %s: страниц модели на сайте производителя: %d", model, len({r["url"] for r in pages}))
     for r in list({r["url"]: r for r in pages}.values())[:3]:
         if r["url"] in rejected:
             continue
@@ -206,6 +279,8 @@ async def find_photo(part, search, web, sources, verifier=None, rejected=frozens
             log.info("страница %s: %s", r["url"], e)
             continue
         image_url = page_image(html.decode("utf-8", "replace"), r["url"]) if "html" in ctype or not ctype else None
+        if not image_url:
+            log.info("фото %s: на странице %s нет og:image", model, r["url"])
         found = image_url and await check(image_url, r["url"], "manufacturer")
         if found:
             return found
@@ -220,7 +295,9 @@ async def find_photo(part, search, web, sources, verifier=None, rejected=frozens
                   and mentions(model, i["title"], i["url"], i["image"])
                   and (sources.is_manufacturer(i["url"] or i["image"], mfr) or sources.is_retailer(i["url"] or i["image"]))]
     candidates.sort(key=lambda i: (not sources.is_manufacturer(i["url"] or i["image"], mfr),
-                                   -(i["width"] or 0) * (i["height"] or 0)))
+                                   -i["width"] * i["height"]))
+    log.info("фото %s: картинок в поиске %d, с кодом модели с сайта производителя или магазина: %d",
+             model, len(images), len(candidates))
     for i in candidates[:5]:
         page = i["url"] or i["image"]
         source = "manufacturer" if sources.is_manufacturer(page, mfr) else "retailer"

@@ -99,6 +99,8 @@ async def run(cfg, it, search, web, sources, state, store=None, *, only=None, li
         except Exception as e:  # noqa: BLE001 — одна модель не должна останавливать весь прогон
             log.exception("ошибка на %s", t.name)
             report.errors.append(f"{t.name}: {type(e).__name__}: {e}"[:200])
+            if store:  # видно в «📜 Журнал» бота; полный текст ошибки — в scraper.log
+                store.log_event(0, "scraper", "error", model=t.name, error=f"{type(e).__name__}: {e}"[:200])
     return report
 
 

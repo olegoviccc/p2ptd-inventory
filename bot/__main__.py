@@ -59,7 +59,7 @@ def build_recognizer(cfg):
 
 async def main():
     cfg = config.load()
-    logs.setup(cfg.data_dir, cfg.log_level)
+    logs.setup(cfg.data_dir, cfg.log_level, extra={"scraper": "scraper.log"})  # прогоны из бота — и в лог каталога
     api = Api(cfg.inventree_url)
     recognizer = build_recognizer(cfg)
     store = Storage(Path(cfg.data_dir) / "bot.sqlite3")

@@ -145,3 +145,8 @@ class State:
         row = self.db.execute("SELECT started, finished, trigger, summary FROM runs "
                               "WHERE finished IS NOT NULL ORDER BY id DESC LIMIT 1").fetchone()
         return None if not row else {"started": row[0], "finished": row[1], "trigger": row[2], **json.loads(row[3])}
+
+    def runs(self, limit=10):
+        rows = self.db.execute("SELECT started, finished, trigger, summary FROM runs ORDER BY id DESC LIMIT ?",
+                               (limit,)).fetchall()
+        return [{"started": r[0], "finished": r[1], "trigger": r[2], **json.loads(r[3] or "{}")} for r in rows]

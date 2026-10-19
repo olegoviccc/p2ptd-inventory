@@ -117,6 +117,18 @@ def site():
     app.router.add_get("/img/mg12xu.png", respond(make_png(), "image/png"))
     app.router.add_get("/manuals/MG12XU_om.pdf", respond(make_pdf("MG12XU Owner's Manual"), "application/pdf"))
     app.router.add_get("/manuals/MG10XU_om.pdf", respond(make_pdf("MG10XU Owner's Manual"), "application/pdf"))
+    # страница товара: мануал не в поиске, а ссылкой на странице, рядом с даташитом
+    ateo = ('<html><body><a href="/dl/ATEO6_datasheet.pdf">ATEO6 Datasheet</a> '
+            '<a href="/dl/ateo_series.pdf?v=2"><span>User manual</span> (EN)</a> <a href="/about">О нас</a></body></html>')
+    app.router.add_get("/products/ateo6.html", respond(ateo.encode(), "text/html"))
+    app.router.add_get("/dl/ATEO6_datasheet.pdf", respond(make_pdf("ATEO6 Datasheet"), "application/pdf"))
+    app.router.add_get("/dl/ateo_series.pdf", respond(make_pdf("ATEO2 ATEO4 ATEO6 User Manual"), "application/pdf"))
+    hits = []
+
+    async def flaky(request):  # как adj.com: первый запрос — 429
+        hits.append(1)
+        return web.Response(status=429) if len(hits) == 1 else web.Response(body=b"ok", content_type="text/plain")
+    app.router.add_get("/flaky", flaky)
     return app
 
 
@@ -197,3 +209,75 @@ def test_link_mode_and_retry(catalog, tmp_path):
     assert link["link"] == f"{base}/manuals/MG12XU_om.pdf"
     assert report.not_found == [("Pioneer DJ XDJ-1000MK2", "мануал")] and not state.due(1, "manual", 30)
     assert forced.checked == 1  # --part ищет снова, не дожидаясь 30 дней
+
+
+def test_ddg_image_sizes_are_strings():
+    """ddgs отдаёт ширину и высоту строками — сортировка кандидатов падала с TypeError."""
+    from scraper.search import DDGSearch
+
+    async def fake_run(method, query, n):
+        return [{"image": "https://a/1.jpg", "url": "https://a", "title": "MG12XU", "width": "800", "height": "600"},
+                {"image": "https://a/2.jpg", "url": "https://a", "title": "MG12XU", "width": "", "height": None}]
+    s = DDGSearch()
+    s._run = fake_run
+    images = asyncio.run(s.images("Yamaha MG12XU"))
+    assert [(i["width"], i["height"]) for i in images] == [(800, 600), (0, 0)]
+
+
+class BrokenSearch(FakeSearch):
+    async def text(self, query, n=10):
+        raise TypeError("bad operand type for unary -: 'str'")
+
+
+def test_part_error_goes_to_journal(catalog, tmp_path):
+    cfg = scraper_cfg(tmp_path)
+    cfg.olegovic_manuals = None
+    store = Storage(tmp_path / "bot.sqlite3")
+
+    async def go(base, w):
+        api = Api(catalog.url)
+        report = await run(cfg, api.client(TOKEN), BrokenSearch(base), w, Sources(), State(tmp_path / "s.sqlite3"), store)
+        await api.close()
+        return report
+
+    report = asyncio.run(with_site(go))
+    assert report.errors and "TypeError" in report.errors[0]
+    errors = [e for e in store.recent_events() if e.action == "error"]
+    assert errors and errors[0].username == "scraper" and "unary" in errors[0].details["error"]
+
+
+def test_pdf_links():
+    html = ('<a class="x" href="files/MG12XU_om_en.pdf">Owner&#39;s <b>Manual</b></a>'
+            '<a href="https://cdn.x/pdf/123">PDF</a><a href="/page.html">не PDF</a><a href="files/MG12XU_om_en.pdf">дубль</a>')
+    assert page_links(html) == [("https://y.com/p/files/MG12XU_om_en.pdf", "Owner's Manual"),
+                                ("https://cdn.x/pdf/123", "PDF")]
+
+
+def page_links(html):
+    from scraper.web import pdf_links
+    return pdf_links(html, "https://y.com/p/index.html")
+
+
+class PagesSearch(FakeSearch):
+    """Поиск находит только страницу товара; первые запросы ничего не дают — сработают запасные."""
+
+    async def text(self, query, n=10):
+        self.queries.append(query)
+        if "user manual" in query:
+            return [{"url": f"{self.base}/products/ateo6.html", "title": "ATEO6 wall speaker | Audac"}]
+        return []
+
+
+def test_manual_from_product_page_and_retry():
+    async def go(base, w):
+        w.retry_wait = 0
+        search = PagesSearch(base)
+        found = await finders.find_manual({"manufacturer": "Audac", "model": "ATEO6"}, search, w,
+                                          Sources({"audac": ["127.0.0.1"]}, [], []))
+        flaky = await w.get(f"{base}/flaky")
+        return found, search.queries, flaky
+
+    found, queries, flaky = asyncio.run(with_site(go))
+    assert found.url.endswith("/dl/ateo_series.pdf?v=2") and found.source == "manufacturer"  # мануал, не даташит
+    assert any("инструкция" in q for q in queries)  # первые запросы пустые → запасные
+    assert flaky[0] == b"ok"  # после 429 — повтор
