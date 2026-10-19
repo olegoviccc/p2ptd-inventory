@@ -429,3 +429,47 @@ def test_renumber_script(server, monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["renumber_serials.py", "--url", server.url, "--token", TOKEN])
     renumber_serials.main()
     assert server.get("stock", 2)["serial"] == "P2PTD0007" and "Переименовано: 1" in capsys.readouterr().out
+
+
+# --- этикетки InvenTree
+
+
+def test_qr_formats():
+    assert images.stockitem_from_qr("INV-SI42") == 42      # короткий формат InvenTree (по умолчанию)
+    assert images.stockitem_from_qr("SI7") == 7
+    assert images.stockitem_from_qr('{"stockitem": 5}') == 5  # JSON, как раньше рисовал бот
+    assert images.stockitem_from_qr("INV-SL3") is None       # это место, а не позиция
+    assert images.stockitem_from_qr("P2PTD0008") is None
+
+
+def test_install_label_template(server, monkeypatch, capsys):
+    import install_label_template
+    argv = ["install_label_template.py", "--url", server.url, "--token", TOKEN]
+    monkeypatch.setattr("sys.argv", argv)
+    install_label_template.main()
+    created = server.db["label"][0]
+    assert (created["name"], created["model_type"], created["width"], created["height"]) == \
+        ("P2PTD 62x29", "stockitem", "62", "29")
+    assert b"{% qrcode qr_data %}" in created["template"]
+    monkeypatch.setattr("sys.argv", argv + ["--width", "50", "--height", "25"])
+    install_label_template.main()  # повторный запуск обновляет тот же шаблон
+    assert len(server.db["label"]) == 1 and server.db["label"][0]["width"] == "50"
+    assert "обновить шаблон" in capsys.readouterr().out
+
+
+def test_label_from_inventree_and_fallback(server):
+    from bot.labels import Labels
+
+    async def go():
+        api, it, _, _ = await session(server)
+        fallback = await Labels("P2PTD 62x29", poll=0).make(it, 2, "P2PTD0007", "Pioneer", "Пешка")
+        server.add("label", {"name": "P2PTD 62x29", "model_type": "stockitem", "enabled": "true"})
+        rendered = await Labels("P2PTD 62x29", poll=0).make(it, 2, "P2PTD0007", "Pioneer", "Пешка")
+        own = await Labels("", poll=0).make(it, 2, "P2PTD0007", "Pioneer", "Пешка")
+        await api.close()
+        return fallback, rendered, own
+
+    fallback, rendered, own = run(go())
+    assert fallback[0] == "P2PTD0007.png" and fallback[1][:4] == b"\x89PNG"  # шаблона нет — рисует бот
+    assert rendered == ("P2PTD0007.pdf", b"%PDF-1.7 fake label") and server.printed[-1]["items"] == [2]
+    assert own[0].endswith(".png")  # BOT_LABEL_TEMPLATE пустой — только своя этикетка

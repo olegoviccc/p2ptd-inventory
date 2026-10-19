@@ -31,6 +31,7 @@ class Config:
     local_llm_source: str    # откуда взяты настройки своей модели (для лога)
     serial_prefix: str
     serial_digits: int
+    label_template: str  # имя шаблона этикетки в InvenTree; пусто — этикетку рисует бот
 
 
 def _think(value):
@@ -88,4 +89,5 @@ def load():
         local_llm_source=source,
         serial_prefix=env("BOT_SERIAL_PREFIX", "P2PTD"),
         serial_digits=int(env("BOT_SERIAL_DIGITS", "4")),
+        label_template=env("BOT_LABEL_TEMPLATE", "P2PTD 62x29"),
     )

@@ -6,7 +6,7 @@ from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from .. import images, service, ui
+from .. import service, ui
 from ..inventree import InvenTreeError
 from . import ItemEdit
 
@@ -154,13 +154,13 @@ async def photo_add(message: Message, state: FSMContext, bot: Bot, it, user, sto
 
 
 @router.callback_query(is_item("label"))
-async def label(call: CallbackQuery, callback_data: ui.Item, it):
+async def label(call: CallbackQuery, callback_data: ui.Item, it, labels):
     item = await it.stock_item(callback_data.pk)
+    await call.answer("Готовлю этикетку…")
     part = item.get("part_detail") or {}
     place = (item.get("location_detail") or {}).get("pathstring", "")
-    png = images.label_png(item["pk"], item["serial"], part.get("full_name") or part.get("name", ""), place)
-    await call.message.answer_document(BufferedInputFile(png, f"{item['serial']}.png"), caption=item["serial"])
-    await call.answer()
+    filename, data = await labels.make(it, item["pk"], item["serial"], part.get("full_name") or part.get("name", ""), place)
+    await call.message.answer_document(BufferedInputFile(data, filename), caption=item["serial"])
 
 
 # --- удаление

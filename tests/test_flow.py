@@ -21,6 +21,7 @@ from aiogram.types import CallbackQuery, Chat, File, Message, PhotoSize, Update,
 from bot import logs, ui
 from bot.handlers import common, routers
 from bot.inventree import Api, Catalog
+from bot.labels import Labels
 from bot.middlewares import Context
 from bot.numbering import Numbering
 from bot.photos import PhotoBuffer
@@ -101,7 +102,8 @@ def environment(tmp_path):
     store = Storage(tmp_path / "bot.sqlite3")
     cfg = SimpleNamespace(allowed_ids=frozenset(), admin_ids=frozenset({ADMIN}), inventree_url=server.url)
     dp = Dispatcher(storage=MemoryStorage(), cfg=cfg, api=api, store=store, catalog=Catalog(),
-                    numbering=Numbering(), recognizer=StaticRecognizer(), photos=PhotoBuffer())
+                    numbering=Numbering(), recognizer=StaticRecognizer(), photos=PhotoBuffer(),
+                    labels=Labels("P2PTD 62x29", poll=0))
     dp.message.outer_middleware(Context())
     dp.callback_query.outer_middleware(Context())
     dp.errors.register(common.on_error)
@@ -216,8 +218,9 @@ async def editing(tmp_path):
         assert len(server.db["attachment"]) == 1
         await send(press(tg.last_buttons()["✅ Готово"]))
 
+        server.add("label", {"name": "P2PTD 62x29", "model_type": "stockitem", "enabled": "true"})
         await send(press(tg.last_buttons()["🖨 Этикетка"]))
-        assert tg.sent[-2][0] == "SendDocument"
+        assert tg.sent[-1][0] == "SendDocument" and server.printed[-1]["items"] == [2]  # PDF от InvenTree
 
         await send(message("X1"))  # S/N поменялся — старый уже не находится
         assert "Ничего не нашёл" in tg.texts()[-1]

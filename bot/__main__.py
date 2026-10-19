@@ -12,6 +12,7 @@ from aiogram.types import BotCommand
 from . import config, logs
 from .handlers import common, routers
 from .inventree import Api, Catalog
+from .labels import Labels
 from .middlewares import Context
 from .numbering import Numbering
 from .photos import PhotoBuffer
@@ -56,6 +57,7 @@ async def main():
         numbering=Numbering(cfg.serial_prefix, cfg.serial_digits),
         recognizer=recognizer,
         photos=PhotoBuffer(),
+        labels=Labels(cfg.label_template),
     )
     dp.message.outer_middleware(Context())
     dp.callback_query.outer_middleware(Context())

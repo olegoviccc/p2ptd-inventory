@@ -8,7 +8,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from .. import images, service, ui
+from .. import service, ui
 from ..recognize import RecognitionError
 from ..service import Draft
 from . import Add
@@ -157,7 +157,7 @@ async def recognize(call: CallbackQuery, state: FSMContext, user, it, catalog, r
 
 
 @router.callback_query(Add.confirm, F.data == ui.SAVE)
-async def save(call: CallbackQuery, state: FSMContext, user, it, catalog, numbering, photos, store):
+async def save(call: CallbackQuery, state: FSMContext, user, it, catalog, numbering, photos, store, labels):
     draft, _ = await draft_of(state)
     await call.answer()
     await call.message.edit_reply_markup(reply_markup=None)
@@ -171,12 +171,12 @@ async def save(call: CallbackQuery, state: FSMContext, user, it, catalog, number
     log.info("сохранено %s: %s в %s", result.number, result.part_name, draft.location_label)
     store.log_event(call.from_user.id, user.username, "saved", number=result.number, model=result.part_name,
                     serial=draft.serial, place=draft.location_label, new_model=result.created_part or None)
-    label = images.label_png(result.stock_pk, result.number, result.part_name, draft.location_label)
+    filename, label = await labels.make(it, result.stock_pk, result.number, result.part_name, draft.location_label)
     caption = (f"✅ <b>{result.number}</b> — {ui.esc(result.part_name)}\n{ui.esc(draft.location_label)}\n"
                f"{it.web_url('stock/item', result.stock_pk)}")
     if result.warnings:
         caption += "\n\n⚠️ " + "\n⚠️ ".join(ui.esc(w) for w in result.warnings)
-    await call.message.answer_document(BufferedInputFile(label, f"{result.number}.png"), caption=caption,
+    await call.message.answer_document(BufferedInputFile(label, filename), caption=caption,
                                        reply_markup=ui.buttons(("✏️ Изменить", ui.Item(action="open", pk=result.stock_pk))))
 
     photos.clear(call.from_user.id)

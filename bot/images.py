@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -30,8 +31,14 @@ def read_barcodes(data):
     return [r.text for r in zxingcpp.read_barcodes(_open(data)) if r.text]
 
 
+SHORT_STOCKITEM = re.compile(r"^(?:[A-Za-z0-9]+-)?SI(\d+)$")
+
+
 def stockitem_from_qr(text):
-    """pk позиции из QR InvenTree ({"stockitem": 42}), иначе None."""
+    """pk позиции из QR InvenTree: короткий формат INV-SI42 (по умолчанию в InvenTree) или JSON {"stockitem": 42}."""
+    m = SHORT_STOCKITEM.match((text or "").strip())
+    if m:
+        return int(m.group(1))
     try:
         value = json.loads(text)
     except (ValueError, TypeError):

@@ -12,7 +12,9 @@ TOKEN = "test-token"
 
 class FakeInvenTree:
     def __init__(self):
-        self.db = {k: [] for k in ("category", "location", "part", "company", "mpn", "stock", "attachment")}
+        self.db = {k: [] for k in ("category", "location", "part", "company", "mpn", "stock", "attachment",
+                                   "label", "output")}
+        self.printed = []  # вызовы /api/label/print/
         self.removed = []  # вызовы /api/stock/remove/
         self.transfers = []  # вызовы /api/stock/transfer/
         self.part_images = {}
@@ -62,6 +64,23 @@ class FakeInvenTree:
                     return self.send({"token": TOKEN})
                 if path == "/api/user/roles/":
                     return self.send({"is_superuser": True, "roles": {}})
+                if path == "/api/user/me/":
+                    return self.send({"username": "admin", "is_staff": True})
+                if path.startswith("/media/"):
+                    body = b"%PDF-1.7 fake label"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/pdf")
+                    self.end_headers()
+                    return self.wfile.write(body)
+                m = re.match(r"/api/data-output/(\d+)/$", path)
+                if m:  # как фоновая задача InvenTree: со второго запроса результат готов
+                    out = server.get("output", int(m.group(1)))
+                    out.update(complete=True, output=f"/media/data_output/label_{out['pk']}.pdf")
+                    return self.send(out)
+                if path == "/api/label/template/":
+                    items = [{k: v for k, v in t.items() if k != "template"} for t in server.db["label"]
+                             if t["model_type"] == q.get("model_type", t["model_type"])]
+                    return self.send({"count": len(items), "next": None, "results": items})
                 m = re.match(r"/api/(part|stock)/(\d+)/$", path)
                 if m:
                     item = server.get(m.group(1), int(m.group(2)))
@@ -92,6 +111,14 @@ class FakeInvenTree:
                     "/api/company/part/manufacturer/": "mpn", "/api/stock/": "stock",
                     "/api/attachment/": "attachment",
                 }.get(self.path)
+                if self.path == "/api/label/template/":
+                    added = server.add("label", d)
+                    return self.send({k: v for k, v in added.items() if k != "template"}, 201)
+                if self.path == "/api/label/print/":
+                    if not any(t["pk"] == d["template"] for t in server.db["label"]):
+                        return self.send({"template": ["Invalid pk"]}, 400)
+                    server.printed.append(d)
+                    return self.send(server.add("output", {"complete": False, "output": None, "errors": None}), 201)
                 if self.path == "/api/stock/transfer/":
                     for row in d["items"]:
                         server.get("stock", row["pk"])["location"] = d["location"]
@@ -120,9 +147,12 @@ class FakeInvenTree:
                 server.requests += 1
                 if not self.authorized():
                     return self.send({"detail": "auth"}, 401)
-                m = re.match(r"/api/(part|stock)/(\d+)/$", self.path)
+                m = re.match(r"/api/(part|stock|label/template)/(\d+)/$", self.path)
                 kind, pk = m.group(1), int(m.group(2))
                 d = self.body()
+                if kind == "label/template":
+                    server.get("label", pk).update(d)
+                    return self.send({k: v for k, v in server.get("label", pk).items() if k != "template"})
                 if "image" in d:
                     server.part_images[pk] = d.pop("image")
                 if kind == "stock" and d.get("serial"):
