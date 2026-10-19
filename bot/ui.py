@@ -15,14 +15,15 @@ HELP = "❓ Помощь"
 JOURNAL = "📜 Журнал"
 LOGIN = "🔑 Войти"
 CATALOG = "🗂 Каталог"
-MENU_TEXTS = {ADD, FIND, PLACE, PROFILE, HELP, JOURNAL, LOGIN, CATALOG}
+DIAG = "🐞 Диагностика"
+MENU_TEXTS = {ADD, FIND, PLACE, PROFILE, HELP, JOURNAL, LOGIN, CATALOG, DIAG}
 
 
 def main_menu(logged_in, is_admin=False):
     if not logged_in:
         rows = [[LOGIN], [HELP]]
     else:
-        rows = [[ADD, FIND], [PLACE, PROFILE], [HELP]] + ([[JOURNAL, CATALOG]] if is_admin else [])
+        rows = [[ADD, FIND], [PLACE, PROFILE], [HELP]] + ([[JOURNAL, CATALOG], [DIAG]] if is_admin else [])
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in row] for row in rows],
                                resize_keyboard=True, is_persistent=True)
 
@@ -57,6 +58,7 @@ class Scr(CallbackData, prefix="sc"):
 
 RECOGNIZE, SAVE, EDIT, CATEGORY, DROP, CHANGE_PLACE, CANCEL, LOGOUT = (
     "recognize", "save", "edit", "category", "drop", "change_place", "cancel", "logout")
+LOG_FILE = "logfile:"  # + имя файла лога: прислать его целиком
 
 STATUS_NAMES = {10: "OK", 50: "Требует внимания", 55: "Повреждено", 60: "Уничтожено",
                 65: "Отклонено", 70: "Потеряно", 75: "Карантин", 85: "Возвращено"}
@@ -178,6 +180,12 @@ HELP_TEXT = (
     f"<b>{PLACE}</b> — где вы сейчас; бот запоминает место для следующих приборов.\n"
     f"<b>{PROFILE}</b> — ваш аккаунт и выход.\n\n"
     "Номер или серийник можно прислать и просто так, без кнопок."
+)
+
+ADMIN_HELP = (
+    f"\n\n<b>Администраторам:</b> <b>{JOURNAL}</b> — кто что делал и ошибки; <b>{CATALOG}</b> — ночной поиск "
+    f"мануалов и фото; <b>{DIAG}</b> — файл с настройками, проверками и логами: если что-то не работает, "
+    "перешлите его разработчику."
 )
 
 

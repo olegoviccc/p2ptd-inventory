@@ -12,6 +12,14 @@ class SearchError(Exception):
     pass
 
 
+def _int(value):
+    """Размер картинки из поиска: ddgs отдаёт строки («800»), иногда пустые или с мусором."""
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 class DDGSearch:
     """Пакет ddgs: без ключа, но поисковик может ограничивать частые запросы."""
 
@@ -35,7 +43,7 @@ class DDGSearch:
 
     async def images(self, query, n=20):
         return [{"image": r.get("image", ""), "url": r.get("url", ""), "title": r.get("title", ""),
-                 "width": r.get("width") or 0, "height": r.get("height") or 0}
+                 "width": _int(r.get("width")), "height": _int(r.get("height"))}
                 for r in await self._run("images", query, n)]
 
 

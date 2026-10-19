@@ -67,6 +67,8 @@ class FakeInvenTree:
                     return self.send({"token": TOKEN})
                 if path == "/api/user/roles/":
                     return self.send({"is_superuser": True, "roles": {}})
+                if path == "/api/":
+                    return self.send({"server": "InvenTree", "version": "1.1.0", "apiVersion": 400})
                 if path == "/api/user/me/":
                     return self.send({"username": "admin", "is_staff": True})
                 if path.startswith("/media/"):

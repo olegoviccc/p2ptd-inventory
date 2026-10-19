@@ -1,13 +1,14 @@
-"""Старт, помощь, профиль, выход, отмена, журнал, обработка ошибок."""
+"""Старт, помощь, профиль, выход, отмена, журнал, диагностика, обработка ошибок."""
 
 import logging
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, ErrorEvent, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, Message
 
-from .. import ui
+from .. import diagnostics, ui
 from ..inventree import InvenTreeError
 
 log = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ router = Router(name="common")
 async def help_(message: Message, user, is_admin):
     greeting = f"Вы вошли как <b>{ui.esc(user.username)}</b>.\n\n" if user else \
         f"Чтобы начать, нажмите «{ui.LOGIN}» и войдите своим аккаунтом InvenTree.\n\n"
-    await message.answer(greeting + ui.HELP_TEXT, reply_markup=ui.main_menu(bool(user), is_admin))
+    await message.answer(greeting + ui.HELP_TEXT + (ui.ADMIN_HELP if is_admin else ""), reply_markup=ui.main_menu(bool(user), is_admin))
 
 
 @router.message(Command("cancel"))
@@ -68,6 +69,35 @@ async def journal(message: Message, store, is_admin):
     if not is_admin:
         return await message.answer("Журнал доступен только администраторам.")
     await message.answer("📜 <b>Последние действия</b>\n\n" + ui.journal_text(store.recent_events(25)))
+
+
+@router.message(Command("diag"))
+@router.message(F.text == ui.DIAG)
+async def diagnostics_report(message: Message, store, cfg, recognizer, is_admin, it=None, scraper=None):
+    """Один .txt со всем, что нужно разработчику: настройки, проверки связи, журнал, хвосты логов."""
+    if not is_admin:
+        return await message.answer("Диагностика доступна только администраторам.")
+    wait = await message.answer("🐞 Собираю диагностику: проверяю InvenTree, модель и каталог…")
+    text = await diagnostics.report(cfg, store, recognizer, scraper, it)
+    name = f"p2ptd-diag-{datetime.now():%Y%m%d-%H%M}.txt"
+    await message.answer_document(
+        BufferedInputFile(text.encode(), name),
+        caption="🐞 Перешлите этот файл разработчику и опишите словами, что делали и что ожидали. "
+                "Токены и ключи из файла вырезаны.\nПолные логи — кнопками ниже.",
+        reply_markup=ui.buttons([(f"📄 {f}", ui.LOG_FILE + f) for f in diagnostics.LOG_FILES]))
+    await wait.delete()
+
+
+@router.callback_query(F.data.startswith(ui.LOG_FILE))
+async def send_log_file(call: CallbackQuery, store, cfg, is_admin):
+    if not is_admin:
+        return await call.answer("Только для администраторов.", show_alert=True)
+    name = call.data.removeprefix(ui.LOG_FILE)
+    text = await diagnostics.log_file(cfg, store, name)
+    if text is None:
+        return await call.answer(f"{name}: файла пока нет.", show_alert=True)
+    await call.message.answer_document(BufferedInputFile(text.encode(), name.replace(".log", ".txt")))
+    await call.answer()
 
 
 async def on_error(event: ErrorEvent, store, cfg, bot):

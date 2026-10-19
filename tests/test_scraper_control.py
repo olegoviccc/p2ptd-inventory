@@ -157,16 +157,15 @@ def test_settings_and_lock(catalog, tmp_path):
 # --- управление из бота
 
 
-async def bot_scenario(catalog, tmp_path, base, w):
-    # фото Yamaha: «не уверена» и в проверке без записи, и в настоящем прогоне
-    s, service_api = make_scraper(catalog, tmp_path, base, w, ScriptedVerifier(photos=[UNSURE, UNSURE]))
+def bot_dispatcher(catalog, tmp_path, s):
+    """Бот с каталогом s; USER — вошедший администратор."""
     tg = FakeTelegram()
     bot = Bot("123:TEST", session=tg)
     api = Api(catalog.url)
-    store = s.store
-    store.save(USER.id, "anna", TOKEN)
-    cfg = SimpleNamespace(allowed_ids=frozenset(), admin_ids=frozenset({USER.id}), inventree_url=catalog.url)
-    dp = Dispatcher(storage=MemoryStorage(), cfg=cfg, api=api, store=store, catalog=Catalog(),
+    s.store.save(USER.id, "anna", TOKEN)
+    cfg = SimpleNamespace(allowed_ids=frozenset(), admin_ids=frozenset({USER.id}), inventree_url=catalog.url,
+                          data_dir=str(tmp_path), recognizers=("static",), telegram_token="")
+    dp = Dispatcher(storage=MemoryStorage(), cfg=cfg, api=api, store=s.store, catalog=Catalog(),
                     numbering=Numbering(), recognizer=StaticRecognizer(), photos=PhotoBuffer(),
                     labels=Labels("", poll=0), scraper=s)
     dp.message.outer_middleware(Context())
@@ -177,6 +176,13 @@ async def bot_scenario(catalog, tmp_path, base, w):
             r.parent_router.sub_routers.remove(r)
             r._parent_router = None
     dp.include_routers(*routers())
+    return tg, dp, bot, api
+
+
+async def bot_scenario(catalog, tmp_path, base, w):
+    # фото Yamaha: «не уверена» и в проверке без записи, и в настоящем прогоне
+    s, service_api = make_scraper(catalog, tmp_path, base, w, ScriptedVerifier(photos=[UNSURE, UNSURE]))
+    tg, dp, bot, api = bot_dispatcher(catalog, tmp_path, s)
     send = lambda update: dp.feed_update(bot, update)  # noqa: E731
 
     async def settle():

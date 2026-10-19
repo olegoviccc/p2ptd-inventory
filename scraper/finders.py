@@ -45,7 +45,9 @@ class Pick:
             return found
         if verdict.verdict == MISMATCH:
             log.info("модель отклонила %s: %s", found.url or found.filename, verdict.reason)
-        elif self.review is None:
+            return None
+        log.info("модель не уверена в %s: %s", found.url or found.filename, verdict.reason)
+        if self.review is None:
             found.status = "review"
             self.review = found
         return None
@@ -122,8 +124,13 @@ async def find_manual(part, search, web, sources, olegovic_folder=None, use_sear
     filename = f"{safe_name(model)}.pdf"
 
     async def check(data, url, source):
+        where = url or "папка olegovic"
         text = pdf_text(data)
-        if not text or norm(model) not in norm(text):
+        if text is None:
+            log.info("мануал %s: %s — не PDF или меньше 30 КБ", model, where)
+            return None
+        if norm(model) not in norm(text):
+            log.info("мануал %s: %s — в тексте первых страниц нет кода модели", model, where)
             return None
         return pick.judge(Found(data, url, source, filename), await pick.verifier.manual(text, part))
 
@@ -145,6 +152,7 @@ async def find_manual(part, search, web, sources, olegovic_folder=None, use_sear
                     results.append(r)
         except SearchError as e:
             log.warning("поиск «%s»: %s", query, e)
+    log.info("мануал %s: %d результатов поиска по %d запросам", model, len(results), len(queries))
 
     def score(r):
         url = r["url"].lower().split("?")[0]
@@ -155,7 +163,7 @@ async def find_manual(part, search, web, sources, olegovic_folder=None, use_sear
         try:
             data, _ = await web.get(r["url"])
         except FetchError as e:
-            log.info("мануал %s: %s", model, e)
+            log.info("мануал %s: не скачался %s", model, e)
             continue
         source = "manufacturer" if sources.is_manufacturer(r["url"], mfr) else "search"
         found = await check(data, r["url"], source)
@@ -186,6 +194,7 @@ async def find_photo(part, search, web, sources, verifier=None, rejected=frozens
             return None
         jpeg = await _image_at(web, image_url)
         if not jpeg:
+            log.info("фото %s: %s — не картинка или меньше %d px", model, image_url, MIN_IMAGE_SIDE)
             return None
         return pick.judge(Found(jpeg, page_url, source, name), await pick.verifier.photo(jpeg, part))
 
@@ -197,6 +206,7 @@ async def find_photo(part, search, web, sources, verifier=None, rejected=frozens
                       if sources.is_manufacturer(r["url"], mfr) and mentions(model, r["url"], r["title"])]
         except SearchError as e:
             log.warning("поиск «%s»: %s", query, e)
+    log.info("фото %s: страниц модели на сайте производителя: %d", model, len({r["url"] for r in pages}))
     for r in list({r["url"]: r for r in pages}.values())[:3]:
         if r["url"] in rejected:
             continue
@@ -206,6 +216,8 @@ async def find_photo(part, search, web, sources, verifier=None, rejected=frozens
             log.info("страница %s: %s", r["url"], e)
             continue
         image_url = page_image(html.decode("utf-8", "replace"), r["url"]) if "html" in ctype or not ctype else None
+        if not image_url:
+            log.info("фото %s: на странице %s нет og:image", model, r["url"])
         found = image_url and await check(image_url, r["url"], "manufacturer")
         if found:
             return found
@@ -220,7 +232,9 @@ async def find_photo(part, search, web, sources, verifier=None, rejected=frozens
                   and mentions(model, i["title"], i["url"], i["image"])
                   and (sources.is_manufacturer(i["url"] or i["image"], mfr) or sources.is_retailer(i["url"] or i["image"]))]
     candidates.sort(key=lambda i: (not sources.is_manufacturer(i["url"] or i["image"], mfr),
-                                   -(i["width"] or 0) * (i["height"] or 0)))
+                                   -i["width"] * i["height"]))
+    log.info("фото %s: картинок в поиске %d, с кодом модели с сайта производителя или магазина: %d",
+             model, len(images), len(candidates))
     for i in candidates[:5]:
         page = i["url"] or i["image"]
         source = "manufacturer" if sources.is_manufacturer(page, mfr) else "retailer"

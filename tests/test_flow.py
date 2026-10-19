@@ -16,7 +16,7 @@ import qrcode
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery, Chat, File, Message, PhotoSize, Update, User
+from aiogram.types import BufferedInputFile, CallbackQuery, Chat, File, Message, PhotoSize, Update, User
 
 from bot import logs, ui
 from bot.handlers import common, routers
@@ -42,11 +42,14 @@ class FakeTelegram(BaseSession):
         super().__init__()
         self.sent = []   # (метод, текст, клавиатура)
         self.files = {}  # file_id → bytes
+        self.documents = []  # (имя файла, bytes) — что бот прислал файлом
 
     async def make_request(self, bot, method, timeout=None):
         name = type(method).__name__
         text = getattr(method, "text", None) or getattr(method, "caption", None)
         self.sent.append((name, text, getattr(method, "reply_markup", None)))
+        if isinstance(getattr(method, "document", None), BufferedInputFile):
+            self.documents.append((method.document.filename, method.document.data))
         if name == "GetFile":
             return File(file_id=method.file_id, file_unique_id=method.file_id, file_path=method.file_id)
         if name in ("SendMessage", "SendDocument", "EditMessageText"):
