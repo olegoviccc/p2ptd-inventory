@@ -1,0 +1,4 @@
+-r ../bot/requirements.txt
+ddgs>=9
+pypdf>=5
+pyyaml>=6

@@ -227,6 +227,10 @@ class InvenTree:
         except aiohttp.ClientError as e:
             raise InvenTreeError(0, f"нет связи с {self.api.base}: {e}") from None
 
+    async def attach_link(self, model_type, model_id, link, comment=""):
+        await self.post("/api/attachment/", {"model_type": model_type, "model_id": model_id, "link": link,
+                                             "comment": comment})
+
     async def attach(self, model_type, model_id, filename, data, comment=""):
         await self.post("/api/attachment/", {"model_type": model_type, "model_id": model_id, "comment": comment},
                         files={"attachment": (filename, data)})

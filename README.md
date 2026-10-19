@@ -2,7 +2,7 @@
 
 Скрипты для наполнения InvenTree (https://p2ptd-inventory.online), Telegram-бот для добавления оборудования по фото и сборка Android-приложения.
 
-**Как всё запустить по шагам: [docs/INSTALL.md](docs/INSTALL.md).** Устройство бота: [docs/BOT.md](docs/BOT.md), план работ: [docs/PLAN.md](docs/PLAN.md).
+**Как всё запустить по шагам: [docs/INSTALL.md](docs/INSTALL.md).** Устройство бота: [docs/BOT.md](docs/BOT.md), ночной поиск мануалов и фото: [docs/SCRAPER.md](docs/SCRAPER.md), план работ: [docs/PLAN.md](docs/PLAN.md).
 
 ## Подготовка (один раз)
 

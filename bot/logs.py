@@ -22,12 +22,12 @@ class _UserFilter(logging.Filter):
         return True
 
 
-def setup(data_dir, level="INFO"):
+def setup(data_dir, level="INFO", filename="bot.log"):
     log_dir = Path(data_dir) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     handlers = [
         logging.StreamHandler(),
-        RotatingFileHandler(log_dir / "bot.log", maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
+        RotatingFileHandler(log_dir / filename, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
     ]
     user_filter = _UserFilter()
     for h in handlers:

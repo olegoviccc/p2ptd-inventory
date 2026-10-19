@@ -161,6 +161,21 @@ systemctl --user status p2ptd-bot          # active (running)
 sudo loginctl enable-linger $USER
 ```
 
+### 3.7 Ночной поиск мануалов и фото
+
+Фоновый процесс раз в сутки находит модели без картинки или мануала и прикладывает найденное. Подробности: [SCRAPER.md](SCRAPER.md).
+
+```
+.venv/bin/pip install -r scraper/requirements.txt
+.venv/bin/python -m scraper --stats
+.venv/bin/python -m scraper --dry-run --limit 3
+cp systemd/p2ptd-scraper.service systemd/p2ptd-scraper.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now p2ptd-scraper.timer
+```
+
+Если хотите, чтобы мануалы искал и olegovic-llm (scraper приложит найденное им), включите у него `[manuals] enabled = true` в `~/.config/olegovic/config.toml`.
+
 ---
 
 ## Часть 4. Первая проверка в Telegram

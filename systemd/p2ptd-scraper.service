@@ -1,0 +1,12 @@
+# Ночной поиск мануалов и фото для моделей в InvenTree. Запускается таймером p2ptd-scraper.timer.
+[Unit]
+Description=p2ptd: мануалы и фото моделей для InvenTree
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/p2ptd-inventory
+ExecStart=%h/p2ptd-inventory/.venv/bin/python -m scraper
+Nice=10
+Environment=PYTHONUNBUFFERED=1

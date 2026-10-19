@@ -46,3 +46,18 @@ def load(path=None):
     base = (llm.get("base_url") or DEFAULT_BASE_URL).rstrip("/")
     return OlegovicLLM(url=base if base.endswith("/v1") else base + "/v1", model=model,
                        think=llm.get("think", {}).get(model), source=path)
+
+
+DEFAULT_MANUALS = "~/olegovic-out/manuals"
+
+
+def manuals_folder(path=None):
+    """Папка, куда olegovic-llm складывает найденные мануалы (<Производитель>/<MPN>.pdf).
+
+    Без конфига olegovic — его папка по умолчанию; scraper просто не найдёт там файлов, если её нет.
+    """
+    path = Path(path).expanduser() if path else config_path()
+    manuals = {}
+    if path.exists():
+        manuals = tomllib.loads(path.read_text(encoding="utf-8")).get("manuals", {})
+    return Path(manuals.get("folder") or DEFAULT_MANUALS).expanduser()

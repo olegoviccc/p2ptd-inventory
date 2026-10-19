@@ -49,7 +49,10 @@ class FakeInvenTree:
                     for chunk in raw.split(b"--" + boundary)[1:-1]:
                         head, _, data = chunk.strip(b"\r\n").partition(b"\r\n\r\n")
                         name = re.search(rb'name="([^"]+)"', head).group(1).decode()
-                        fields[name] = data if b"filename=" in head else data.decode()
+                        filename = re.search(rb'filename="([^"]*)"', head)
+                        fields[name] = data if filename else data.decode()
+                        if filename:
+                            fields[name + "__filename"] = filename.group(1).decode()
                     return fields
                 return json.loads(raw) if raw else {}
 
@@ -89,9 +92,10 @@ class FakeInvenTree:
                     "/api/part/category/": "category", "/api/stock/location/": "location",
                     "/api/part/": "part", "/api/company/": "company",
                     "/api/company/part/manufacturer/": "mpn", "/api/stock/": "stock",
+                    "/api/attachment/": "attachment",
                 }[path]
                 items = list(server.db[table])
-                for key in ("part", "location", "serial", "batch"):
+                for key in ("part", "location", "serial", "batch", "model_type"):
                     if key in q:
                         items = [i for i in items if str(i.get(key)) == q[key]]
                 if "search" in q:
@@ -99,6 +103,9 @@ class FakeInvenTree:
                     items = [i for i in items if any(s in str(v).casefold() for v in i.values())]
                 if table == "stock":
                     items = [server.detail(i) for i in items]
+                # файлы отдаются ссылкой, как в InvenTree, а не байтами
+                items = [{k: (f"/media/{k}/{i.get(k + '__filename', 'file')}" if isinstance(v, bytes) else v)
+                          for k, v in i.items() if not k.endswith("__filename")} for i in items]
                 self.send({"count": len(items), "next": None, "results": items})
 
             def do_POST(self):
@@ -155,6 +162,7 @@ class FakeInvenTree:
                     return self.send({k: v for k, v in server.get("label", pk).items() if k != "template"})
                 if "image" in d:
                     server.part_images[pk] = d.pop("image")
+                    d["image"] = f"/media/part_images/part_{pk}.jpg"
                 if kind == "stock" and d.get("serial"):
                     if any(i.get("serial") == d["serial"] and i["pk"] != pk for i in server.db["stock"]):
                         return self.send({"serial": ["Serial number already exists"]}, 400)

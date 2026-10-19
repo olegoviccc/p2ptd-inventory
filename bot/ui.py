@@ -213,7 +213,8 @@ def item_text(item, url):
 EVENT_NAMES = {"login": "вошёл", "logout": "вышел", "recognized": "распознал", "saved": "добавил",
                "save_failed": "не смог сохранить", "recognize_failed": "не распознал", "lookup": "искал",
                "moved": "переместил", "status": "сменил статус", "batch": "исправил S/N", "note": "добавил заметку",
-               "photo": "добавил фото", "deleted": "удалил", "error": "ошибка"}
+               "photo": "добавил фото", "deleted": "удалил", "error": "ошибка",
+               "manual_added": "нашёл мануал", "image_added": "нашёл фото модели"}
 
 
 def journal_text(events):
