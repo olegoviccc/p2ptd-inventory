@@ -9,7 +9,7 @@ from bot.llm import LocalLLM
 
 from .finders import Found
 from .run import Report, attach_manual, run, targets
-from .search import BraveSearch, DDGSearch
+from .search import BraveSearch, ChainSearch, DDGSearch, TavilySearch
 from .sources import Sources
 from .state import State
 from .verify import NoVerifier, Verifier
@@ -107,9 +107,16 @@ class Scraper:
             await self.llm.close()
 
 
+def make_search(cfg, web):
+    engines = {"ddgs": DDGSearch, "brave": lambda: BraveSearch(cfg.brave_key, web.session),
+               "tavily": lambda: TavilySearch(cfg.tavily_key, web.session, cfg.tavily_depth)}
+    chain = [engines[name]() for name in cfg.search]
+    return chain[0] if len(chain) == 1 else ChainSearch(chain)
+
+
 def build(cfg, api, store=None):
     web = Web()
-    search = BraveSearch(cfg.brave_key, web.session) if cfg.search == "brave" else DDGSearch()
+    search = make_search(cfg, web)
     llm = LocalLLM(cfg.llm["url"], cfg.llm["model"], timeout=cfg.llm["timeout"], think=cfg.llm["think"]) \
         if cfg.llm else None
     return Scraper(cfg, api.client(cfg.inventree_token), State(Path(cfg.data_dir) / "scraper.sqlite3"),

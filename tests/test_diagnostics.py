@@ -76,3 +76,7 @@ async def diag_scenario(catalog, tmp_path, base, w):
 
 def test_diagnostics_in_bot(catalog, tmp_path):
     asyncio.run(with_site(lambda base, w: diag_scenario(catalog, tmp_path, base, w)))
+
+
+def test_mask_tavily_key():
+    assert diagnostics.mask("tavily: 401 key tvly-dev-AbCdEf1234567890") == f"tavily: 401 key {diagnostics.HIDDEN}"

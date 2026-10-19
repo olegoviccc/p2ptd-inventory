@@ -20,12 +20,13 @@ from . import logs, ui
 STARTED = time.time()
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGES = ("aiogram", "aiohttp", "anthropic", "ddgs", "pypdf", "pillow", "zxing-cpp")
-SECRET_ENV = ("TELEGRAM_BOT_TOKEN", "INVENTREE_TOKEN", "ANTHROPIC_API_KEY", "BRAVE_API_KEY", "LOCAL_LLM_API_KEY")
+SECRET_ENV = ("TELEGRAM_BOT_TOKEN", "INVENTREE_TOKEN", "ANTHROPIC_API_KEY", "BRAVE_API_KEY", "TAVILY_API_KEY",
+              "LOCAL_LLM_API_KEY")
 LOG_FILES = ("bot.log", "scraper.log")
 HIDDEN = "«скрыто»"
 
 _TELEGRAM = re.compile(r"(?<!\d)\d{6,}:[A-Za-z0-9_-]{30,}")  # и внутри URL: api.telegram.org/bot<токен>/
-_PREFIXED = re.compile(r"\b(?:inv|sk)-[A-Za-z0-9_-]{10,}")
+_PREFIXED = re.compile(r"\b(?:inv|sk|tvly)-[A-Za-z0-9_-]{10,}")
 _AUTH = re.compile(r"(?i)\b(token|bearer|basic) [A-Za-z0-9+/=_.-]{10,}")
 _ASSIGN = re.compile(r"(?i)\b(api[_-]?key|token|password|x-api-key)([\"']?\s*[:=]\s*[\"']?)[^\s\"',&]{6,}")
 

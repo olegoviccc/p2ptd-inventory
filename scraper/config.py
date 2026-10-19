@@ -29,8 +29,10 @@ class Config:
     olegovic_manuals: Path | None
     limit: int                # моделей за один запуск
     retry_days: int
-    search: str               # ddgs | brave
+    search: tuple             # поисковики по очереди: ddgs, brave, tavily
     brave_key: str
+    tavily_key: str
+    tavily_depth: str         # basic (1 кредит) | advanced (2 кредита, точнее)
     telegram_token: str
     admin_ids: frozenset
     verify: bool              # проверять находки моделью
@@ -49,7 +51,17 @@ def load():
     mode = env("SCRAPER_MANUAL_MODE", "file")
     if mode not in ("file", "link"):
         raise SystemExit(f"SCRAPER_MANUAL_MODE: file или link (сейчас {mode})")
-    brave_key = env("BRAVE_API_KEY", "")
+    brave_key, tavily_key = env("BRAVE_API_KEY", ""), env("TAVILY_API_KEY", "")
+    default_search = "tavily,ddgs" if tavily_key else "brave,ddgs" if brave_key else "ddgs"
+    search = tuple(x.strip() for x in env("SCRAPER_SEARCH", default_search).split(",") if x.strip())
+    if not search or set(search) - {"ddgs", "brave", "tavily"}:
+        raise SystemExit(f"SCRAPER_SEARCH: ddgs, brave, tavily или цепочка вроде tavily,ddgs (сейчас {search})")
+    for engine, key, name in (("brave", brave_key, "BRAVE_API_KEY"), ("tavily", tavily_key, "TAVILY_API_KEY")):
+        if engine in search and not key:
+            raise SystemExit(f"SCRAPER_SEARCH={','.join(search)}: нужен {name} в .env")
+    tavily_depth = env("TAVILY_SEARCH_DEPTH", "basic")
+    if tavily_depth not in ("basic", "advanced"):
+        raise SystemExit(f"TAVILY_SEARCH_DEPTH: basic или advanced (сейчас {tavily_depth})")
     verify = env("SCRAPER_VERIFY", "olegovic")
     if verify not in ("olegovic", "local", "off"):
         raise SystemExit(f"SCRAPER_VERIFY: olegovic, local или off (сейчас {verify})")
@@ -74,8 +86,10 @@ def load():
         olegovic_manuals=Path(folder).expanduser() if folder else None,
         limit=int(env("SCRAPER_LIMIT", "20")),
         retry_days=int(env("SCRAPER_RETRY_DAYS", "30")),
-        search=env("SCRAPER_SEARCH", "brave" if brave_key else "ddgs"),
+        search=search,
         brave_key=brave_key,
+        tavily_key=tavily_key,
+        tavily_depth=tavily_depth,
         telegram_token=env("TELEGRAM_BOT_TOKEN", ""),
         admin_ids=_ids("BOT_ADMIN_IDS"),
         verify=verify != "off" and llm is not None,
