@@ -245,3 +245,19 @@ async def add_note(it, pk, text, author):
 
 async def add_photo(it, pk, photo, author):
     await it.attach("stockitem", pk, photo.name, photo.raw, comment=f"Добавлено через бота: {author}")
+
+
+# --- мануалы деталей
+
+MANUAL_WORDS = ("руководство", "мануал", "manual", "инструкция")
+
+
+def is_manual_attachment(attachment):
+    """Вложение похоже на мануал: PDF-файл или ссылка, либо подпись со словом «руководство»."""
+    name = (attachment.get("filename") or attachment.get("attachment") or attachment.get("link") or "").lower()
+    comment = (attachment.get("comment") or "").lower()
+    return name.split("?")[0].endswith(".pdf") or any(w in comment for w in MANUAL_WORDS)
+
+
+async def part_manuals(it, part_pk):
+    return [a for a in await it.part_attachments(part_pk) if is_manual_attachment(a)]

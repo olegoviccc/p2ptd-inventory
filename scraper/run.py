@@ -4,11 +4,11 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
+from bot.service import is_manual_attachment
+
 from .finders import find_manual, find_photo
 
 log = logging.getLogger(__name__)
-
-MANUAL_WORDS = ("руководство", "мануал", "manual", "инструкция")
 
 
 @dataclass
@@ -30,15 +30,16 @@ class Report:
     checked: int = 0
     manuals: list = field(default_factory=list)      # (модель, источник)
     photos: list = field(default_factory=list)
+    review: list = field(default_factory=list)       # (модель, что) — модель не уверена, решает человек
     not_found: list = field(default_factory=list)    # (модель, что не нашлось)
     errors: list = field(default_factory=list)
+    total: int = 0                                   # сколько моделей ждёт поиска в этом прогоне (для прогресса)
 
-
-def is_manual(attachment):
-    """Вложение похоже на мануал: PDF-файл или ссылка, либо подпись со словом «руководство»."""
-    name = (attachment.get("filename") or attachment.get("attachment") or attachment.get("link") or "").lower()
-    comment = (attachment.get("comment") or "").lower()
-    return name.split("?")[0].endswith(".pdf") or any(w in comment for w in MANUAL_WORDS)
+    def summary(self):
+        return {"manuals": len(self.manuals), "photos": len(self.photos), "review": len(self.review),
+                "not_found": len(self.not_found), "errors": len(self.errors), "checked": self.checked,
+                "missing_manual": self.missing_manual, "missing_photo": self.missing_photo,
+                "no_model": self.no_model, "parts": self.parts}
 
 
 async def targets(it, report):
@@ -52,7 +53,7 @@ async def targets(it, report):
     mpn_of = {}
     for m in mpns:
         mpn_of.setdefault(m["part"], m)
-    with_manual = {int(a["model_id"]) for a in attachments if is_manual(a)}
+    with_manual = {int(a["model_id"]) for a in attachments if is_manual_attachment(a)}
 
     report.parts = len(parts)
     result = []
@@ -70,62 +71,84 @@ async def targets(it, report):
 
 
 async def run(cfg, it, search, web, sources, state, store=None, *, only=None, limit=None,
-              dry_run=False, part_pk=None, force=False):
-    report = Report()
+              dry_run=False, part_pk=None, force=False, verifier=None, report=None):
+    report = report or Report()
     do_manuals = cfg.manuals and only in (None, "manuals")
     do_photos = cfg.photos and only in (None, "photos")
     limit = limit or cfg.limit
 
+    queue = []
     for t in await targets(it, report):
         if part_pk and t.pk != part_pk:
             continue
         manual = do_manuals and t.needs_manual and (force or state.due(t.pk, "manual", cfg.retry_days))
         photo = do_photos and t.needs_photo and (force or state.due(t.pk, "photo", cfg.retry_days))
-        if not (manual or photo):
-            continue
-        if report.checked >= limit:
-            break
+        if manual or photo:
+            queue.append((t, manual, photo))
+    queue = queue[:limit]
+    report.total = len(queue)
+
+    for t, manual, photo in queue:
         report.checked += 1
         log.info("ищу для %s:%s%s", t.name, " мануал" if manual else "", " фото" if photo else "")
         try:
             if manual:
-                await _manual(cfg, it, search, web, sources, state, store, t, report, dry_run)
+                await _manual(cfg, it, search, web, sources, state, store, t, report, dry_run, verifier)
             if photo:
-                await _photo(it, search, web, sources, state, store, t, report, dry_run)
+                await _photo(it, search, web, sources, state, store, t, report, dry_run, verifier)
         except Exception as e:  # noqa: BLE001 — одна модель не должна останавливать весь прогон
             log.exception("ошибка на %s", t.name)
             report.errors.append(f"{t.name}: {type(e).__name__}: {e}"[:200])
     return report
 
 
-async def _manual(cfg, it, search, web, sources, state, store, t, report, dry_run):
-    found = await find_manual({"manufacturer": t.manufacturer, "model": t.model}, search, web, sources,
-                              cfg.olegovic_manuals, cfg.manual_search)
+def _part(t):
+    return {"manufacturer": t.manufacturer, "model": t.model}
+
+
+def _settled(kind, found, t, state, report, dry_run):
+    """Общее для мануала и фото: не нашлось или на проверку. True — дальше прикладывать не нужно."""
+    what = "мануал" if kind == "manual" else "фото"
     if not found:
-        report.not_found.append((t.name, "мануал"))
+        report.not_found.append((t.name, what))
         if not dry_run:
-            state.record(t.pk, "manual", "not_found")
+            state.record(t.pk, kind, "not_found")
+        return True
+    if found.status == "review":
+        log.info("%s для %s — на проверку: %s (%s)", what, t.name, found.url, found.reason)
+        report.review.append((t.name, what))
+        if not dry_run:
+            state.add_review(t.pk, t.name, kind, found)
+        return True
+    return False
+
+
+async def attach_manual(it, mode, part_pk, found):
+    comment = f"Руководство пользователя (источник: {found.url or 'olegovic-llm'})"[:250]
+    if mode == "link" and found.url:
+        await it.attach_link("part", part_pk, found.url, comment)
+    else:
+        await it.attach("part", part_pk, found.filename, found.data, comment)
+
+
+async def _manual(cfg, it, search, web, sources, state, store, t, report, dry_run, verifier):
+    found = await find_manual(_part(t), search, web, sources, cfg.olegovic_manuals, cfg.manual_search,
+                              verifier, state.rejected(t.pk, "manual"))
+    if _settled("manual", found, t, state, report, dry_run):
         return
     log.info("мануал для %s: %s (%s)", t.name, found.url or "папка olegovic", found.source)
     report.manuals.append((t.name, found.source))
     if dry_run:
         return
-    comment = f"Руководство пользователя (источник: {found.url or 'olegovic-llm'})"[:250]
-    if cfg.manual_mode == "link" and found.url:
-        await it.attach_link("part", t.pk, found.url, comment)
-    else:
-        await it.attach("part", t.pk, found.filename, found.data, comment)
+    await attach_manual(it, cfg.manual_mode, t.pk, found)
     state.record(t.pk, "manual", "found", found.source, found.url)
     if store:
         store.log_event(0, "scraper", "manual_added", model=t.name, source=found.source)
 
 
-async def _photo(it, search, web, sources, state, store, t, report, dry_run):
-    found = await find_photo({"manufacturer": t.manufacturer, "model": t.model}, search, web, sources)
-    if not found:
-        report.not_found.append((t.name, "фото"))
-        if not dry_run:
-            state.record(t.pk, "photo", "not_found")
+async def _photo(it, search, web, sources, state, store, t, report, dry_run, verifier):
+    found = await find_photo(_part(t), search, web, sources, verifier, state.rejected(t.pk, "photo"))
+    if _settled("photo", found, t, state, report, dry_run):
         return
     log.info("фото для %s: %s (%s)", t.name, found.url, found.source)
     report.photos.append((t.name, found.source))
@@ -151,6 +174,9 @@ def format_report(r, dry_run=False):
         lines.append("\n📘 Мануалы: " + ", ".join(f"{n} ({SOURCE_NAMES.get(s, s)})" for n, s in r.manuals))
     if r.photos:
         lines.append("🖼 Фото: " + ", ".join(f"{n} ({SOURCE_NAMES.get(s, s)})" for n, s in r.photos))
+    if r.review:
+        lines.append(f"📥 На проверку: {len(r.review)} — " + ", ".join(f"{n} ({w})" for n, w in r.review[:10])
+                     + ("" if dry_run else ". Откройте «🗂 Каталог» в боте."))
     if r.not_found:
         lines.append("Не нашлось: " + ", ".join(f"{n} — {what}" for n, what in r.not_found[:15])
                      + (f" и ещё {len(r.not_found) - 15}" if len(r.not_found) > 15 else ""))

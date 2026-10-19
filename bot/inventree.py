@@ -227,6 +227,9 @@ class InvenTree:
         except aiohttp.ClientError as e:
             raise InvenTreeError(0, f"нет связи с {self.api.base}: {e}") from None
 
+    async def part_attachments(self, part_pk):
+        return await self.get_all("/api/attachment/", model_type="part", model_id=part_pk)
+
     async def attach_link(self, model_type, model_id, link, comment=""):
         await self.post("/api/attachment/", {"model_type": model_type, "model_id": model_id, "link": link,
                                              "comment": comment})

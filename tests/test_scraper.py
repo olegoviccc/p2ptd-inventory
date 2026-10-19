@@ -4,7 +4,6 @@ import asyncio
 import io
 from types import SimpleNamespace
 
-import pytest
 from aiohttp import web
 from PIL import Image
 
@@ -15,7 +14,7 @@ from scraper.run import format_report, run
 from scraper.sources import Sources
 from scraper.state import State
 from scraper.web import Web, page_image
-from tests.fake_inventree import TOKEN, FakeInvenTree, seed
+from tests.fake_inventree import TOKEN
 
 
 def make_pdf(text, pad=40_000):
@@ -119,18 +118,6 @@ def site():
     app.router.add_get("/manuals/MG12XU_om.pdf", respond(make_pdf("MG12XU Owner's Manual"), "application/pdf"))
     app.router.add_get("/manuals/MG10XU_om.pdf", respond(make_pdf("MG10XU Owner's Manual"), "application/pdf"))
     return app
-
-
-@pytest.fixture
-def catalog():
-    s = FakeInvenTree()
-    seed(s)  # Pioneer DJ XDJ-1000MK2 (pk 1): мануал лежит в папке olegovic
-    s.db["company"] += [{"pk": 1, "name": "Pioneer DJ"}, {"pk": 2, "name": "Yamaha"}]
-    s.db["part"] += [{"pk": 2, "name": "Yamaha MG12XU", "category": 2, "image": None, "active": True},
-                     {"pk": 3, "name": "LED Par", "category": 2, "image": None, "active": True}]  # без модели
-    s.db["mpn"].append({"pk": 2, "part": 2, "manufacturer": 2, "MPN": "MG12XU"})
-    yield s
-    s.close()
 
 
 def scraper_cfg(tmp_path, **kw):

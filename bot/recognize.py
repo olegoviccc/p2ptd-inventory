@@ -9,14 +9,13 @@
 """
 
 import base64
-import json
 import logging
-import re
 import time
 from dataclasses import dataclass, fields
 
-import aiohttp
 import anthropic
+
+from .llm import LLMError, LocalLLM, extract_json, image_part
 
 log = logging.getLogger(__name__)
 
@@ -94,24 +93,6 @@ def prompt(categories, known_models, barcodes):
                          known=known, barcodes=", ".join(barcodes) or "none")
 
 
-def extract_json(text):
-    """Объект JSON из ответа модели: без размышлений <think>…</think>, обёртки ``` и пояснений вокруг."""
-    text = re.sub(r"<think>.*?(</think>|$)", "", text or "", flags=re.S).strip()
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
-    try:
-        return json.loads(text)
-    except ValueError:
-        pass
-    decoder = json.JSONDecoder()
-    start = text.find("{")
-    while start != -1:  # первый целый объект в тексте
-        try:
-            return decoder.raw_decode(text, start)[0]
-        except ValueError:
-            start = text.find("{", start + 1)
-    raise ValueError("в ответе нет JSON")
-
-
 def finalize(text, photo_count, categories, engine, started):
     """JSON ответа модели → Recognition с проверкой значений (локальные модели схему не гарантируют)."""
     try:
@@ -178,75 +159,23 @@ class LocalRecognizer:
     name = "local"
 
     def __init__(self, base_url, model, api_key="", timeout=300, think=None):
-        self.base = base_url.rstrip("/")
-        self.url = self.base + "/chat/completions"
-        self.model = model
-        self.think = think
-        self.headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        self.timeout = aiohttp.ClientTimeout(total=timeout)
-        self._session = None
-
-    @property
-    def session(self):
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(timeout=self.timeout)
-        return self._session
+        self.llm = LocalLLM(base_url, model, api_key, timeout, think)
 
     async def close(self):
-        if self._session and not self._session.closed:
-            await self._session.close()
+        await self.llm.close()
 
     async def check(self):
         """Проверка при старте: сервер отвечает и знает модель. Возвращает текст проблемы или None."""
-        try:
-            async with self.session.get(self.base + "/models", headers=self.headers,
-                                        timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status >= 400:
-                    return f"{self.base}/models ответил {resp.status}"
-                ids = [m.get("id") for m in (await resp.json(content_type=None)).get("data", [])]
-        except (aiohttp.ClientError, TimeoutError, ValueError) as e:
-            return f"нет связи с {self.base}: {e}"
-        if ids and self.model not in ids:
-            return f"модели {self.model} нет на сервере (есть: {', '.join(ids[:8])})"
-        return None
+        return await self.llm.check()
 
     async def recognize(self, photos, categories, known_models=(), barcodes=()):
         started = time.monotonic()
         content = [{"type": "text", "text": prompt(categories, known_models, barcodes)}]
-        content += [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64(p)}"}} for p in photos]
-        body = {
-            "model": self.model,
-            "temperature": 0,
-            "messages": [{"role": "user", "content": content}],
-            "max_tokens": 8192,
-            # strict=False — как в olegovic-llm: llama-server и Ollama держат схему грамматикой
-            "response_format": {"type": "json_schema",
-                                "json_schema": {"name": "recognition", "strict": False, "schema": schema(categories)}},
-        }
-        if self.think is None or isinstance(self.think, bool):
-            # Qwen-шаблоны: прочитать шильдик размышления не нужны, без них быстрее и JSON не обрывается.
-            # Шаблоны без этой переменной её просто игнорируют.
-            body["chat_template_kwargs"] = {"enable_thinking": bool(self.think)}
-        else:                             # gpt-oss: low / medium / high
-            body["reasoning_effort"] = self.think
-            body["chat_template_kwargs"] = {"reasoning_effort": self.think}
+        content += [image_part(p) for p in photos]
         try:
-            async with self.session.post(self.url, json=body, headers=self.headers) as resp:
-                if resp.status >= 400:
-                    raise RecognitionError(f"local: сервер ответил {resp.status}: {(await resp.text())[:200]}")
-                data = await resp.json(content_type=None)
-        except (aiohttp.ClientError, TimeoutError) as e:
-            raise RecognitionError(f"local: нет связи с {self.url}") from e
-        try:
-            choice = data["choices"][0]
-            text = choice["message"].get("content") or ""
-        except (KeyError, IndexError, TypeError, AttributeError) as e:
-            raise RecognitionError("local: неожиданный формат ответа") from e
-        if isinstance(text, list):  # некоторые серверы отдают content частями
-            text = "".join(part.get("text", "") for part in text if isinstance(part, dict))
-        if choice.get("finish_reason") == "length" and "{" not in text:
-            raise RecognitionError("local: модель упёрлась в лимит токенов, не дописав ответ "
-                                   "(обычно из-за размышлений: LOCAL_LLM_THINK=false)")
+            text = await self.llm.complete(content, schema(categories), "recognition")
+        except LLMError as e:
+            raise RecognitionError(f"local: {e}") from e
         return finalize(text, len(photos), categories, self.name, started)
 
 

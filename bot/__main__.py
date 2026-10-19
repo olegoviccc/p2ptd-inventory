@@ -31,6 +31,21 @@ COMMANDS = [
 ]
 
 
+def build_scraper(api, store):
+    """Каталог (ночной поиск мануалов и фото) для кнопки «🗂 Каталог»; None, если не настроен."""
+    try:
+        from scraper import config as scraper_config
+        from scraper.engine import build
+        cfg = scraper_config.load()
+    except ImportError as e:
+        log.warning("каталог выключен: нет зависимостей (%s) — pip install -r scraper/requirements.txt", e)
+        return None
+    except SystemExit as e:
+        log.info("каталог выключен: %s", e)
+        return None
+    return build(cfg, api, store)
+
+
 def build_recognizer(cfg):
     engines = []
     for name in cfg.recognizers:
@@ -47,12 +62,15 @@ async def main():
     logs.setup(cfg.data_dir, cfg.log_level)
     api = Api(cfg.inventree_url)
     recognizer = build_recognizer(cfg)
+    store = Storage(Path(cfg.data_dir) / "bot.sqlite3")
+    scraper = build_scraper(api, store)
     bot = Bot(cfg.telegram_token, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(
         storage=MemoryStorage(),
         cfg=cfg,
         api=api,
-        store=Storage(Path(cfg.data_dir) / "bot.sqlite3"),
+        store=store,
+        scraper=scraper,
         catalog=Catalog(),
         numbering=Numbering(cfg.serial_prefix, cfg.serial_digits),
         recognizer=recognizer,
@@ -75,6 +93,8 @@ async def main():
     finally:
         await api.close()
         await recognizer.close()
+        if scraper:
+            await scraper.close()
         await bot.session.close()
 
 

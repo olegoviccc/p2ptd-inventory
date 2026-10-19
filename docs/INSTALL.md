@@ -98,7 +98,7 @@ cd ~/p2ptd-inventory
 
 ```
 python -m venv .venv
-.venv/bin/pip install -r requirements.txt -r bot/requirements.txt
+.venv/bin/pip install -r requirements.txt -r bot/requirements.txt -r scraper/requirements.txt
 ```
 
 ### 3.4 Настройки
@@ -163,10 +163,9 @@ sudo loginctl enable-linger $USER
 
 ### 3.7 Ночной поиск мануалов и фото
 
-Фоновый процесс раз в сутки находит модели без картинки или мануала и прикладывает найденное. Подробности: [SCRAPER.md](SCRAPER.md).
+Фоновый процесс раз в сутки находит модели без картинки или мануала, проверяет находки моделью olegovic-llm и прикладывает их. Управляется из бота кнопкой «🗂 Каталог» (у администраторов). Подробности: [SCRAPER.md](SCRAPER.md).
 
 ```
-.venv/bin/pip install -r scraper/requirements.txt
 .venv/bin/python -m scraper --stats
 .venv/bin/python -m scraper --dry-run --limit 3
 cp systemd/p2ptd-scraper.service systemd/p2ptd-scraper.timer ~/.config/systemd/user/

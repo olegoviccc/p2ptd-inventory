@@ -95,7 +95,7 @@ class FakeInvenTree:
                     "/api/attachment/": "attachment",
                 }[path]
                 items = list(server.db[table])
-                for key in ("part", "location", "serial", "batch", "model_type"):
+                for key in ("part", "location", "serial", "batch", "model_type", "model_id"):
                     if key in q:
                         items = [i for i in items if str(i.get(key)) == q[key]]
                 if "search" in q:
