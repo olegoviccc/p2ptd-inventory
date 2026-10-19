@@ -12,11 +12,12 @@ from bot.matching import norm
 
 from .search import SearchError
 from .verify import MATCH, MISMATCH, NoVerifier
-from .web import FetchError, page_image
+from .web import FetchError, is_html, page_image, pdf_links
 
 log = logging.getLogger(__name__)
 
 MIN_PDF_BYTES = 30_000
+MAX_MANUAL_DOWNLOADS = 15  # страниц и PDF на одну модель за прогон
 MIN_IMAGE_SIDE = 300
 MAX_IMAGE_SIDE = 1600
 
@@ -142,34 +143,96 @@ async def find_manual(part, search, web, sources, olegovic_folder=None, use_sear
     if not use_search:
         return pick.review
 
-    queries = [f"{mfr} {model} manual pdf"] + [f"{model} manual site:{d}" for d in sources.domains(mfr)[:2]]
-    seen, results = set(rejected), []
-    for query in queries:
-        try:
-            for r in await search.text(query, 10):
-                if r["url"] and r["url"] not in seen and not sources.is_skipped(r["url"]):
-                    seen.add(r["url"])
-                    results.append(r)
-        except SearchError as e:
-            log.warning("поиск «%s»: %s", query, e)
-    log.info("мануал %s: %d результатов поиска по %d запросам", model, len(results), len(queries))
+    seen = set(rejected)
+    budget = [MAX_MANUAL_DOWNLOADS]  # сколько файлов и страниц ещё можно скачать для этой модели
 
-    def score(r):
-        url = r["url"].lower().split("?")[0]
-        return (not sources.is_manufacturer(r["url"], mfr), not url.endswith(".pdf"),
-                not mentions(model, r["url"], r["title"]), "manual" not in (url + r["title"].lower()))
-
-    for r in sorted(results, key=score)[:6]:
+    async def fetch(url, max_bytes=None):
+        if budget[0] <= 0:
+            return None, ""
+        budget[0] -= 1
         try:
-            data, _ = await web.get(r["url"])
+            return await web.get(url, max_bytes)
         except FetchError as e:
             log.info("мануал %s: не скачался %s", model, e)
-            continue
-        source = "manufacturer" if sources.is_manufacturer(r["url"], mfr) else "search"
-        found = await check(data, r["url"], source)
-        if found:
-            return found
-    return pick.review
+            return None, ""
+
+    async def try_pdf(url, page=None):
+        source = "manufacturer" if sources.is_manufacturer(url, mfr) or (page and sources.is_manufacturer(page, mfr)) \
+            else "search"
+        data, _ = await fetch(url)
+        return data and await check(data, url, source)
+
+    async def try_page(url, html):
+        """Страница товара или поддержки: мануал обычно лежит на ней ссылкой."""
+        links = [(u, t) for u, t in pdf_links(html.decode("utf-8", "replace"), url)
+                 if u not in seen and not sources.is_skipped(u)]
+        ranked = sorted(links, key=lambda link: manual_link_score(link, model))
+        log.info("мануал %s: %s — страница, ссылок на PDF %d%s", model, url, len(links),
+                 f", пробую: {', '.join(u for u, _ in ranked[:3])}" if ranked else "")
+        for link, _ in ranked[:3]:
+            seen.add(link)
+            found = await try_pdf(link, page=url)
+            if found:
+                return found
+        return None
+
+    async def search_round(queries):
+        results = []
+        for query in queries:
+            try:
+                for r in await search.text(query, 10):
+                    if r["url"] and r["url"] not in seen and not sources.is_skipped(r["url"]):
+                        seen.add(r["url"])
+                        results.append(r)
+            except SearchError as e:
+                log.warning("поиск «%s»: %s", query, e)
+        log.info("мануал %s: %d результатов поиска по запросам %s", model, len(results), queries)
+
+        def score(r):
+            url = r["url"].lower().split("?")[0]
+            return (not sources.is_manufacturer(r["url"], mfr), not url.endswith(".pdf"),
+                    not mentions(model, r["url"], r["title"]), "manual" not in (url + r["title"].lower()))
+
+        for r in sorted(results, key=score)[:6]:
+            data, ctype = await fetch(r["url"])
+            if data is None:
+                continue
+            if is_html(data, ctype):
+                if sources.is_manufacturer(r["url"], mfr) or mentions(model, r["url"], r["title"]):
+                    found = await try_page(r["url"], data)
+                    if found:
+                        return found
+                else:
+                    log.info("мануал %s: %s — страница не производителя и без кода модели, пропускаю", model, r["url"])
+                continue
+            source = "manufacturer" if sources.is_manufacturer(r["url"], mfr) else "search"
+            found = await check(data, r["url"], source)
+            if found:
+                return found
+        return None
+
+    found = await search_round([f"{mfr} {model} manual pdf"]
+                               + [f"{model} manual site:{d}" for d in sources.domains(mfr)[:2]])
+    if not found and not pick.review:  # запасные запросы: другие слова, русские сайты
+        found = await search_round([f"{mfr} {model} user manual", f"{mfr} {model} инструкция pdf"])
+    if not found and budget[0] <= 0:
+        log.info("мануал %s: исчерпан лимит в %d загрузок", model, MAX_MANUAL_DOWNLOADS)
+    return found or pick.review
+
+
+MANUAL_WORDS = ("manual", "user", "owner", "operat", "instruction", "guide", "handbuch", "bedienungs",
+                "инструкц", "руководств")
+NOT_MANUAL_WORDS = ("datasheet", "data sheet", "data_sheet", "spec", "brochure", "catalog", "declaration",
+                    "conformity", "doc_", "rohs", "ce_", "warranty", "service", "price", "dimension", "cad")
+
+
+def manual_link_score(link, model):
+    """Меньше — лучше. На странице товара все ссылки про эту модель, поэтому сначала отличаем
+    мануал от даташита и декларации, а код модели в названии решает только при равенстве."""
+    url, text = link
+    hay = (url + " " + text).lower()
+    return (any(w in hay for w in NOT_MANUAL_WORDS), not any(w in hay for w in MANUAL_WORDS),
+            not mentions(model, url, text))
 
 
 # --- фото

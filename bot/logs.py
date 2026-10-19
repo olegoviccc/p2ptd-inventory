@@ -52,5 +52,7 @@ def setup(data_dir, level="INFO", filename="bot.log", extra=None):
             h.close()
         logger.addHandler(_prepare(_file(folder / extra_file), user_filter))
     # Библиотеки пишут слишком подробно на INFO
-    for noisy in ("aiogram.event", "httpx", "anthropic"):
+    for noisy in ("aiogram.event", "httpx", "anthropic", "primp", "ddgs"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    # pypdf на каждом PDF со шрифтами-кривульками пишет сотни строк «Ignoring final token…»
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
