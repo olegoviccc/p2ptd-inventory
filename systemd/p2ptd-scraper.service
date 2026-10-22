@@ -6,7 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/p2ptd-inventory
-ExecStart=%h/p2ptd-inventory/.venv/bin/python -m scraper --nightly
+WorkingDirectory=%h/code/p2ptd-inventory
+ExecStart=%h/code/p2ptd-inventory/.venv/bin/python -m scraper --nightly
 Nice=10
 Environment=PYTHONUNBUFFERED=1

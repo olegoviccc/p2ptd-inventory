@@ -180,8 +180,8 @@ tests/             поддельный InvenTree и Telegram, сквозной 
 1. Создайте **отдельного** бота у @BotFather (у olegovic свой бот, токены не смешиваем).
 2. Установите бота:
    ```
-   git clone https://github.com/olegoviccc/p2ptd-inventory ~/p2ptd-inventory
-   cd ~/p2ptd-inventory
+   git clone https://github.com/olegoviccc/p2ptd-inventory ~/code/p2ptd-inventory
+   cd ~/code/p2ptd-inventory
    python -m venv .venv && .venv/bin/pip install -r bot/requirements.txt
    cp .env.example .env    # впишите TELEGRAM_BOT_TOKEN, INVENTREE_URL, BOT_ADMIN_IDS; BOT_RECOGNIZER=olegovic
    ```
@@ -191,7 +191,7 @@ tests/             поддельный InvenTree и Telegram, сквозной 
    cp systemd/p2ptd-bot.service ~/.config/systemd/user/
    systemctl --user daemon-reload
    systemctl --user enable --now p2ptd-bot
-   journalctl --user -u p2ptd-bot -f      # лог; он же в ~/p2ptd-inventory/bot_data/logs/bot.log
+   journalctl --user -u p2ptd-bot -f      # лог; он же в ~/code/p2ptd-inventory/bot_data/logs/bot.log
    ```
 5. В Telegram: «🔑 Войти» → «➕ Добавить прибор».
 

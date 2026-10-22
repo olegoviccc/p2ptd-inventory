@@ -42,7 +42,7 @@ Purchase Orders нужны потому, что производители в In
 Этикетки печатает InvenTree по нашему шаблону. Поставьте его один раз, **после шагов 3.2–3.4** (репозиторий, venv и `.env` уже есть). В `INVENTREE_TOKEN` должен быть токен пользователя со статусом **staff**:
 
 ```
-cd ~/p2ptd-inventory
+cd ~/code/p2ptd-inventory
 .venv/bin/python install_label_template.py --dry-run
 .venv/bin/python install_label_template.py
 ```
@@ -88,11 +88,11 @@ curl -s http://127.0.0.1:8080/v1/models   # список моделей, сре�
 ### 3.2 Скачайте репозиторий
 
 ```
-git clone https://github.com/olegoviccc/p2ptd-inventory ~/p2ptd-inventory
-cd ~/p2ptd-inventory
+git clone https://github.com/olegoviccc/p2ptd-inventory ~/code/p2ptd-inventory
+cd ~/code/p2ptd-inventory
 ```
 
-Папка должна называться именно `~/p2ptd-inventory`: на неё ссылается сервис из шага 3.6. Если кладёте в другое место, поправьте пути в `systemd/p2ptd-bot.service`.
+Папка должна называться именно `~/code/p2ptd-inventory`: на неё ссылается сервис из шага 3.6. Если кладёте в другое место, поправьте пути в `systemd/p2ptd-bot.service`.
 
 ### 3.3 Установите зависимости
 
@@ -220,7 +220,7 @@ systemctl --user enable --now p2ptd-scraper.timer
 С этой версии номера выглядят как `P2PTD0001` (раньше `P2PTD-00001`): на этикетке влезает последняя цифра. Новые приборы сразу получают новый формат и продолжают нумерацию после старых. Уже выданные номера переведите один раз:
 
 ```
-cd ~/p2ptd-inventory
+cd ~/code/p2ptd-inventory
 .venv/bin/python renumber_serials.py --dry-run   # список: P2PTD-00008 → P2PTD0008
 .venv/bin/python renumber_serials.py
 ```
@@ -232,9 +232,9 @@ cd ~/p2ptd-inventory
 | Что | Команда |
 |---|---|
 | Лог в реальном времени | `journalctl --user -u p2ptd-bot -f` |
-| Лог-файл | `~/p2ptd-inventory/bot_data/logs/bot.log`, каталог — `scraper.log` рядом. Из бота: «🐞 Диагностика» |
+| Лог-файл | `~/code/p2ptd-inventory/bot_data/logs/bot.log`, каталог — `scraper.log` рядом. Из бота: «🐞 Диагностика» |
 | Перезапуск после правки `.env` | `systemctl --user restart p2ptd-bot` |
-| Обновление | `cd ~/p2ptd-inventory && git pull && .venv/bin/pip install -r bot/requirements.txt && systemctl --user restart p2ptd-bot` |
+| Обновление | `cd ~/code/p2ptd-inventory && git pull && .venv/bin/pip install -r bot/requirements.txt && systemctl --user restart p2ptd-bot` |
 | Остановить | `systemctl --user stop p2ptd-bot` |
 | Подробный лог (каждый запрос к InvenTree) | `BOT_LOG_LEVEL=DEBUG` в `.env`, перезапуск |
 
@@ -257,9 +257,9 @@ cd ~/p2ptd-inventory
 | После входа «не хватает прав» | Права группы (шаг 1.3) |
 | «Сессия InvenTree больше не действует» | Токен отозван или пользователь отключён: войдите заново |
 | Распознаёт долго | Первый раз модель грузится. Если постоянно медленно, проверьте, не включены ли размышления (`LOCAL_LLM_THINK` или `[llm.think]` в olegovic) |
-| «не распознал: local: ответ не JSON» | Модель ответила не по формату. Начало её ответа записано в лог (`не разобран ответ модели`): `grep -A2 'не разобран' ~/p2ptd-inventory/bot_data/logs/bot.log`. Пришлите эту строку — разберём |
+| «не распознал: local: ответ не JSON» | Модель ответила не по формату. Начало её ответа записано в лог (`не разобран ответ модели`): `grep -A2 'не разобран' ~/code/p2ptd-inventory/bot_data/logs/bot.log`. Пришлите эту строку — разберём |
 | «модель упёрлась в лимит токенов» | Модель ушла в размышления. Уберите `LOCAL_LLM_THINK=true` и `true` для этой модели в `[llm.think]` olegovic |
 | «Не получилось распознать» | Переснимите ближе и ровнее, фото отправьте файлом. Если модель недоступна, включите запасной Claude: `BOT_RECOGNIZER=olegovic,claude` |
-| Бот присылает этикетку PNG, а не PDF | Бот не нашёл шаблон или InvenTree не отрисовал его за 30 секунд. Причина в логе: `grep 'этикетка из InvenTree' ~/p2ptd-inventory/bot_data/logs/bot.log`. Чаще всего шаблон не установлен (шаг 1.4) или его имя не совпадает с `BOT_LABEL_TEMPLATE` |
+| Бот присылает этикетку PNG, а не PDF | Бот не нашёл шаблон или InvenTree не отрисовал его за 30 секунд. Причина в логе: `grep 'этикетка из InvenTree' ~/code/p2ptd-inventory/bot_data/logs/bot.log`. Чаще всего шаблон не установлен (шаг 1.4) или его имя не совпадает с `BOT_LABEL_TEMPLATE` |
 | Серийник с ⚠️ «сверьте с фото» | Штрихкода не было или он не совпал. Сверьте серийник глазами, при необходимости «✏️ Исправить» |
 | «Прибор с этим S/N уже заведён» | Он уже в базе, номер указан в сообщении. Найдите его через «🔎 Найти» |

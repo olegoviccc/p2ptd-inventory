@@ -48,7 +48,7 @@ def load(path=None):
                        think=llm.get("think", {}).get(model), source=path)
 
 
-DEFAULT_MANUALS = "~/olegovic-out/manuals"
+DEFAULT_MANUALS = "~/olegovic/out/manuals"
 
 
 def manuals_folder(path=None):
