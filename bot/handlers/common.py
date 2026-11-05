@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, Message
@@ -103,6 +104,8 @@ async def send_log_file(call: CallbackQuery, store, cfg, is_admin):
 async def on_error(event: ErrorEvent, store, cfg, bot):
     """Ошибки из любых обработчиков: понятный ответ пользователю, лог, уведомление администраторам."""
     update, exc = event.update, event.exception
+    if isinstance(exc, TelegramBadRequest) and "message is not modified" in str(exc):
+        return True  # то же содержимое уже на экране (двойное нажатие) — не ошибка
     source = update.message or update.callback_query
     tg_user = source.from_user if source else None
     origin = update.callback_query.message if update.callback_query else update.message
@@ -131,3 +134,15 @@ async def on_error(event: ErrorEvent, store, cfg, bot):
     if origin:
         await origin.answer(text, reply_markup=markup)
     return True
+
+
+# Последним: кнопки, которые никто не обработал. Обычно это карточка, начатая до перезапуска бота —
+# черновик и фото хранятся в памяти и после перезапуска пропадают.
+fallback = Router(name="fallback")
+
+
+@fallback.callback_query()
+async def stale_button(call: CallbackQuery):
+    log.info("кнопка %s без обработчика (устаревшее сообщение)", call.data)
+    await call.answer("Эта карточка устарела: бот перезапускался. Нажмите «➕ Добавить прибор» и пришлите фото заново.",
+                      show_alert=True)

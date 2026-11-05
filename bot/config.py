@@ -36,6 +36,8 @@ class Config:
     serial_prefix: str
     serial_digits: int
     label_template: str  # имя шаблона этикетки в InvenTree; пусто — этикетку рисует бот
+    label_recipient: str  # пользователь InvenTree, которому другие могут отправлять этикетки; пусто — без кнопок
+    print_url: str  # страница печати на NIIMBOT (print/index.html на GitHub Pages); пусто — без кнопки
 
 
 def _think(value):
@@ -100,4 +102,6 @@ def load():
         serial_prefix=env("BOT_SERIAL_PREFIX", "P2PTD"),
         serial_digits=int(env("BOT_SERIAL_DIGITS", "4")),
         label_template=env("BOT_LABEL_TEMPLATE", "P2PTD 62x29"),
+        label_recipient=env("BOT_LABEL_RECIPIENT", ""),
+        print_url=env("BOT_PRINT_URL", ""),
     )

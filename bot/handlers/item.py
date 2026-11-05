@@ -8,7 +8,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from .. import service, ui
 from ..inventree import InvenTreeError
-from . import ItemEdit
+from . import ItemEdit, share
 
 log = logging.getLogger(__name__)
 router = Router(name="item")
@@ -154,13 +154,18 @@ async def photo_add(message: Message, state: FSMContext, bot: Bot, it, user, sto
 
 
 @router.callback_query(is_item("label"))
-async def label(call: CallbackQuery, callback_data: ui.Item, it, labels):
+async def label(call: CallbackQuery, callback_data: ui.Item, it, labels, cfg, store, user, bot: Bot):
     item = await it.stock_item(callback_data.pk)
     await call.answer("Готовлю этикетку…")
     part = item.get("part_detail") or {}
     place = (item.get("location_detail") or {}).get("pathstring", "")
-    filename, data = await labels.make(it, item["pk"], item["serial"], part.get("full_name") or part.get("name", ""), place)
-    await call.message.answer_document(BufferedInputFile(data, filename), caption=item["serial"])
+    name = part.get("full_name") or part.get("name", "")
+    filename, data = await labels.make(it, item["pk"], item["serial"], name, place)
+    rows = (*ui.print_buttons(cfg.print_url, item["serial"], name, place, it.web_url("stock/item", item["pk"])),
+            *share.share_buttons(cfg, store, user))
+    sent = await call.message.answer_document(BufferedInputFile(data, filename), caption=item["serial"],
+                                              reply_markup=ui.buttons(*rows) if rows else None)
+    await share.after_label(bot, cfg, store, user, sent)
 
 
 # --- мануал модели

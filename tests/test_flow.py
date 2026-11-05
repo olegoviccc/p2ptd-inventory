@@ -19,7 +19,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BufferedInputFile, CallbackQuery, Chat, File, Message, PhotoSize, Update, User
 
 from bot import logs, ui
-from bot.handlers import common, routers
+from bot.handlers import add, common, routers
 from bot.inventree import Api, Catalog
 from bot.labels import Labels
 from bot.middlewares import Context
@@ -103,7 +103,8 @@ def environment(tmp_path):
     bot = Bot("123:TEST", session=tg)
     api = Api(server.url)
     store = Storage(tmp_path / "bot.sqlite3")
-    cfg = SimpleNamespace(allowed_ids=frozenset(), admin_ids=frozenset({ADMIN}), inventree_url=server.url)
+    cfg = SimpleNamespace(allowed_ids=frozenset(), admin_ids=frozenset({ADMIN}), inventree_url=server.url,
+                          print_url="https://print.example/", label_recipient="")
     dp = Dispatcher(storage=MemoryStorage(), cfg=cfg, api=api, store=store, catalog=Catalog(),
                     numbering=Numbering(), recognizer=StaticRecognizer(), photos=PhotoBuffer(),
                     labels=Labels("P2PTD 62x29", poll=0))
@@ -116,6 +117,14 @@ def environment(tmp_path):
             r._parent_router = None
     dp.include_routers(*routers())
     return server, tg, store, api, lambda update: dp.feed_update(bot, update)
+
+
+async def wait_for_text(tg, fragment, timeout=5):
+    """Ждёт сообщение от фоновой задачи бота (автораспознавание) и возвращает его текст."""
+    async with asyncio.timeout(timeout):
+        while not tg.texts() or fragment not in tg.texts()[-1]:
+            await asyncio.sleep(0.01)
+    return tg.texts()[-1]
 
 
 async def scenario(tmp_path):
@@ -144,8 +153,8 @@ async def scenario(tmp_path):
         tg.files["f1"] = qr_png("VJXK012345")
         tg.files["f2"] = qr_png("just a photo")
         await asyncio.gather(send(message(photo="f1")), send(message(photo="f2")))
-        await send(press(tg.last_buttons()["🔍 Распознать (2 фото)"]))
-        card = tg.texts()[-1]
+        # кнопки нет: карточка появляется сама, когда новых фото больше нет
+        card = await wait_for_text(tg, "Pioneer DJ XDJ-1000MK2")
         assert "Pioneer DJ XDJ-1000MK2" in card and "✓ совпал со штрихкодом" in card and "2 шт." in card
 
         # сохранить
@@ -186,7 +195,8 @@ async def scenario(tmp_path):
         server.close()
 
 
-def test_full_scenario(tmp_path):
+def test_full_scenario(tmp_path, monkeypatch):
+    monkeypatch.setattr(add, "AUTO_RECOGNIZE_DELAY", 0.05)
     asyncio.run(scenario(tmp_path))
 
 

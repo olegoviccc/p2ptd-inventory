@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Печать этикетки</title>
+<!--
+  Печать этикетки P2PTD на NIIMBOT D110 (30 × 15 мм) прямо из браузера по Bluetooth.
+  Бот открывает страницу со ссылкой вида
+    ?n=P2PTD0001&m=Модель&p=Заведение%20/%20Место&u=https://inventree.example/web/stock/item/1
+  Работает в Chrome на Android (Web Bluetooth). Протокол принтера — niimbluelib (MIT).
+-->
+<script src="https://unpkg.com/@mmote/niimbluelib@0.47.0/dist/umd/niimbluelib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f4f2; --card: #ffffff; --text: #1c1c1a; --muted: #6b6b66; --line: #dddcd6;
+    --accent: #1f6feb; --accent-text: #ffffff; --ok: #1a7f37; --err: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161615; --card: #22221f; --text: #ecebe6; --muted: #a09f98; --line: #3a3934;
+      --accent: #4c8dff; --accent-text: #0b0b0a; --ok: #4ac26b; --err: #ff6b6b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161615; --card: #22221f; --text: #ecebe6; --muted: #a09f98; --line: #3a3934;
+    --accent: #4c8dff; --accent-text: #0b0b0a; --ok: #4ac26b; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 480px; margin: 0 auto; display: grid; gap: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .preview { display: flex; justify-content: center; }
+  canvas {
+    width: 100%; max-width: 360px; aspect-ratio: 240 / 96; height: auto;
+    image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; background: #fff;
+  }
+  .meta { color: var(--muted); font-size: 14px; margin-top: 8px; text-align: center; }
+  button, .btn {
+    display: block; width: 100%; padding: 14px; border: 0; border-radius: 10px; font: inherit; font-weight: 600;
+    background: var(--accent); color: var(--accent-text); text-align: center; text-decoration: none; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 12px; }
+  select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  #status { min-height: 1.4em; font-size: 15px; }
+  #status.ok { color: var(--ok); } #status.err { color: var(--err); }
+  .hint { color: var(--muted); font-size: 14px; }
+  .hint p { margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🖨 Этикетка для NIIMBOT D110</h1>
+
+  <div class="card">
+    <div class="preview"><canvas id="label" width="240" height="96"></canvas></div>
+    <div class="meta">30 × 15 мм</div>
+  </div>
+
+  <div class="card" id="printer">
+    <button id="print">Подключить принтер и печатать</button>
+    <div class="row">
+      <label for="density">Плотность</label>
+      <select id="density"><option value="1">1 — светлее</option><option value="2">2</option><option value="3">3 — темнее</option></select>
+    </div>
+    <div class="row">
+      <label for="copies">Копий</label>
+      <select id="copies"><option>1</option><option>2</option><option>3</option></select>
+    </div>
+    <p id="status"></p>
+  </div>
+
+  <div class="card hint" id="nobt" hidden>
+    <p><b>Этот браузер не умеет Bluetooth.</b> Нужен Chrome на Android.</p>
+    <p id="chrome-wrap"><a class="btn" id="chrome">Открыть в Chrome</a></p>
+    <p>На iPhone печать отсюда не работает (только через браузер Bluefy).</p>
+  </div>
+
+  <div class="hint">
+    <p>Перед печатью закройте приложение NIIMBOT: принтер держит только одно подключение.</p>
+  </div>
+</main>
+
+<script>
+const W = 240, H = 96;  // 30 × 12 мм печатной области при 203 dpi (8 точек на мм); печатающая головка D110 — 96 точек
+const q = new URLSearchParams(location.search);
+const data = { number: q.get("n") || "", model: q.get("m") || "", place: q.get("p") || "", url: q.get("u") || "" };
+const canvas = document.getElementById("label");
+const statusEl = document.getElementById("status");
+const printBtn = document.getElementById("print");
+let client = null;
+
+function setStatus(text, kind = "") { statusEl.textContent = text; statusEl.className = kind; }
+
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+function wrap(ctx, text, maxWidth) {
+  const lines = [];
+  let cur = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const candidate = cur ? cur + " " + word : word;
+    if (ctx.measureText(candidate).width <= maxWidth) { cur = candidate; continue; }
+    if (cur) lines.push(cur);
+    cur = word;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+// Самый крупный шрифт, при котором текст влезает в maxLines строк
+function fitLines(ctx, text, maxWidth, sizes, maxLines, weight) {
+  for (const size of sizes) {
+    ctx.font = `${weight} ${size}px system-ui, Roboto, Arial, sans-serif`;
+    const lines = wrap(ctx, text, maxWidth);
+    if (lines.length <= maxLines && lines.every(l => ctx.measureText(l).width <= maxWidth)) return { size, lines };
+  }
+  const size = sizes[sizes.length - 1];
+  ctx.font = `${weight} ${size}px system-ui, Roboto, Arial, sans-serif`;
+  return { size, lines: wrap(ctx, text, maxWidth).slice(0, maxLines) };
+}
+
+function draw() {
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#000";
+  ctx.textBaseline = "top";
+
+  // QR: целое число точек на модуль, иначе сканер путается
+  let qrSide = 0;
+  if (data.url) {
+    const qr = qrcode(0, "L");
+    qr.addData(data.url);
+    qr.make();
+    const count = qr.getModuleCount();
+    const cell = Math.floor((H - 4) / count);
+    qrSide = count * cell;
+    const off = Math.floor((H - qrSide) / 2);
+    for (let r = 0; r < count; r++)
+      for (let c = 0; c < count; c++)
+        if (qr.isDark(r, c)) ctx.fillRect(off + c * cell, off + r * cell, cell, cell);
+    qrSide += off * 2;
+  }
+
+  const x = qrSide + 4, maxWidth = W - x - 2;
+  let y = 3;
+  const num = fitLines(ctx, data.number, maxWidth, [24, 22, 20, 18], 1, 800);
+  num.lines.forEach(l => { ctx.fillText(l, x, y); y += num.size + 3; });
+  const model = fitLines(ctx, data.model, maxWidth, [17, 15, 14, 13], 2, 700);
+  model.lines.forEach(l => { ctx.fillText(l, x, y); y += model.size + 1; });
+  if (data.place) {
+    const place = fitLines(ctx, data.place, maxWidth, [14, 13, 12], 2, 600);
+    let py = H - 2 - place.lines.length * (place.size + 1);
+    py = Math.max(py, y + 2);
+    place.lines.forEach(l => { ctx.fillText(l, x, py); py += place.size + 1; });
+  }
+
+  // Принтер печатает только чёрное и белое: сглаживание букв превращаем в чёткие точки
+  const img = ctx.getImageData(0, 0, W, H);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = img.data[i] * 0.299 + img.data[i + 1] * 0.587 + img.data[i + 2] * 0.114 < 150 ? 0 : 255;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+async function connect() {
+  client = niimbluelib.instantiateClient("bluetooth");
+  client.on("disconnect", () => { client = null; printBtn.textContent = "Подключить принтер и печатать"; });
+  setStatus("Выберите принтер в списке…");
+  await client.connect();
+  printBtn.textContent = "Печатать";
+}
+
+async function print() {
+  printBtn.disabled = true;
+  try {
+    if (!client) await connect();
+    const copies = Number(document.getElementById("copies").value);
+    const density = Number(document.getElementById("density").value);
+    store.set("density", String(density));
+    const meta = client.getModelMetadata();
+    const encoded = niimbluelib.ImageEncoder.encodeCanvas(canvas, niimbluelib.PageColorType.SingleColor,
+                                                          meta?.printDirection || "left");
+    const task = client.protocol.newPrintTask(client.getPrintTaskType() || "D110", {
+      totalPages: copies, density, statusPollIntervalMs: 100, statusTimeoutMs: 8000,
+    });
+    setStatus("Печатаю…");
+    try {
+      await task.printInit();
+      await task.printPage(encoded, copies);
+      await task.waitForPageFinished();
+      await task.waitForFinished();
+    } finally {
+      await task.printEnd();
+    }
+    setStatus(`✅ Напечатано (${copies} шт.)`, "ok");
+  } catch (e) {
+    console.error(e);
+    const text = String(e && e.message || e);
+    if (/cancel|chooser/i.test(text)) setStatus("Принтер не выбран.", "err");
+    else setStatus("Не получилось: " + text + ". Закройте приложение NIIMBOT и попробуйте ещё раз.", "err");
+    if (client) { try { await client.disconnect(); } catch {} client = null; }
+  } finally {
+    printBtn.disabled = false;
+  }
+}
+
+function init() {
+  draw();
+  document.getElementById("density").value = store.get("density") || "2";
+  if (!data.number && !data.url) setStatus("Нет данных этикетки: откройте страницу кнопкой из бота.", "err");
+  if (!navigator.bluetooth) {
+    document.getElementById("printer").hidden = true;
+    document.getElementById("nobt").hidden = false;
+    if (/Android/i.test(navigator.userAgent)) {
+      const href = location.href.replace(/^https?:\/\//, "");
+      document.getElementById("chrome").href = `intent://${href}#Intent;scheme=https;package=com.android.chrome;end`;
+    } else {
+      document.getElementById("chrome-wrap").hidden = true;
+    }
+    return;
+  }
+  printBtn.onclick = print;
+}
+
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(init); else init();
+</script>
+</body>
+</html>

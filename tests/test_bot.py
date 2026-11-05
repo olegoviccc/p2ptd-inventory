@@ -242,7 +242,9 @@ def test_existing_model_from_rider(server):
     assert server.get("part", 1)["trackable"] is True
     assert len(server.db["attachment"]) == 2 and server.part_images[1] == b"jpeg2"
     assert again.duplicate == "P2PTD0008" and not again.can_save
-    assert "Сохранить" not in str(card_kb(again))
+    assert "Сохранить" not in str(card_kb(again)) and "Добавить ещё одну единицу" in str(card_kb(again))
+    again.allow_duplicate = True
+    assert again.can_save and "Сохранить" in str(card_kb(again))
 
 
 def test_new_model_and_catalog_cache(server):

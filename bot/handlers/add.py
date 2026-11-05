@@ -1,5 +1,6 @@
 """Добавление прибора: место → фото → распознавание → карточка → сохранение."""
 
+import asyncio
 import logging
 from dataclasses import asdict
 
@@ -11,10 +12,12 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from .. import service, ui
 from ..recognize import RecognitionError
 from ..service import Draft
-from . import Add
+from . import Add, share
 
 log = logging.getLogger(__name__)
 router = Router(name="add")
+
+AUTO_RECOGNIZE_DELAY = 2.0  # секунд без новых фото, после которых распознаём сами
 
 free_text = F.text & ~F.text.in_(ui.MENU_TEXTS) & ~F.text.startswith("/")
 EDIT_KEYS = {
@@ -25,8 +28,8 @@ EDIT_KEYS = {
 
 
 def photos_prompt(label):
-    return (f"📍 <b>{ui.esc(label)}</b>\n\nПришлите 1–3 фото прибора: шильдик крупно и общий вид. "
-            "Если отправить фото файлом, мелкий текст читается лучше.")
+    return (f"📍 <b>{ui.esc(label)}</b>\n\nПришлите 1–3 фото прибора одним сообщением: шильдик крупно и общий вид. "
+            "Распознаю сразу, как придут. Если отправить фото файлом, мелкий текст читается лучше.")
 
 
 async def draft_of(state):
@@ -101,18 +104,23 @@ def photo_file(message):
 
 
 @router.message(StateFilter(Add.photos, Add.confirm), F.photo | F.document)
-async def add_photo(message: Message, state: FSMContext, bot: Bot, photos):
+async def add_photo(message: Message, state: FSMContext, bot: Bot, photos, user, it, catalog, recognizer, store):
     file = photo_file(message)
     if not file:
         return await message.answer("Это не изображение. Пришлите фото.")
     uid = message.from_user.id
+    photos.cancel(uid)  # новое фото: распознаём заново, уже со всеми
     if await state.get_state() == Add.confirm.state:  # новые фото после карточки = следующий прибор
         photos.clear(uid)
         await state.set_state(Add.photos)
 
     # Скачивание и обработка — вне блокировки, чтобы фото из альбома шли параллельно
-    raw = (await bot.download(file[0])).read()
-    photo = await service.load_photo(file[1], raw)
+    photos.downloading[uid] += 1
+    try:
+        raw = (await bot.download(file[0])).read()
+        photo = await service.load_photo(file[1], raw)
+    finally:
+        photos.downloading[uid] -= 1
 
     async with photos.lock(uid):
         if not photos.add(uid, photo):
@@ -124,66 +132,118 @@ async def add_photo(message: Message, state: FSMContext, bot: Bot, photos):
             except Exception:  # noqa: BLE001 — старое сообщение могло уже исчезнуть
                 pass
         count = len(photos.get(uid))
-        found = f" Штрихкодов на фото: {len(photo.barcodes)}." if photo.barcodes else ""
-        status = await message.answer(f"Фото: {count}.{found} Можно добавить ещё или распознать.",
-                                      reply_markup=ui.photos_kb(count))
+        found = f" Штрихкодов: {len(photo.barcodes)}." if photo.barcodes else ""
+        status = await message.answer(f"Фото: {count}.{found} Сейчас распознаю…", reply_markup=ui.photos_wait_kb())
         await state.update_data(status_msg=status.message_id)
+
+    async def edit(text, markup=None):
+        await bot.edit_message_text(text, chat_id=status.chat.id, message_id=status.message_id, reply_markup=markup)
+
+    photos.schedule(uid, auto_recognize(uid, edit, state, user, it, catalog, recognizer, photos, store))
+
+
+async def auto_recognize(uid, edit, state, user, it, catalog, recognizer, photos, store):
+    await asyncio.sleep(AUTO_RECOGNIZE_DELAY)
+    if photos.downloading[uid]:
+        return  # ещё качается фото: его обработчик запланирует распознавание заново
+    if await state.get_state() != Add.photos.state:
+        return  # человек успел отменить или сменить место
+    try:
+        await run_recognition(uid, edit, state, user, it, catalog, recognizer, photos.get(uid), store)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — фоновая задача: ошибку aiogram уже не поймает
+        log.exception("распознавание в фоне упало")
+        await edit("Что-то пошло не так, ошибка записана в лог. Попробуйте ещё раз.", ui.photos_kb(len(photos.get(uid))))
 
 
 # --- распознавание и карточка
 
 
-@router.callback_query(Add.photos, F.data == ui.RECOGNIZE)
-async def recognize(call: CallbackQuery, state: FSMContext, user, it, catalog, recognizer, photos, store):
-    batch = photos.get(call.from_user.id)
-    if not batch:
-        return await call.answer("Сначала пришлите фото", show_alert=True)
-    await call.answer()
-    await call.message.edit_text("🔍 Распознаю…")
+async def run_recognition(uid, edit, state, user, it, catalog, recognizer, batch, store):
+    await edit("🔍 Распознаю…")
     data = await state.get_data()
     try:
         draft, rec = await service.recognize(it, catalog, recognizer, batch,
                                              data["location_pk"], data["location_label"])
     except RecognitionError as e:
-        store.log_event(call.from_user.id, user.username, "recognize_failed", error=str(e)[:200])
-        return await call.message.edit_text(f"Не получилось распознать: {ui.esc(e)}\nПопробуйте другое фото.",
-                                            reply_markup=ui.photos_kb(len(batch)))
+        store.log_event(uid, user.username, "recognize_failed", error=str(e)[:200])
+        return await edit(f"Не получилось распознать: {ui.esc(e)}\nПришлите другое фото или попробуйте ещё раз.",
+                          ui.photos_kb(len(batch)))
+    if await state.get_state() != Add.photos.state:
+        return  # пока распознавали, человек отменил или сменил место
     log.info("распознано %s за %d мс (%s, %s)", rec.name, rec.elapsed_ms, rec.engine, rec.confidence)
-    store.log_event(call.from_user.id, user.username, "recognized", model=draft.name, serial=draft.serial,
+    store.log_event(uid, user.username, "recognized", model=draft.name, serial=draft.serial,
                     engine=rec.engine, ms=rec.elapsed_ms, confidence=rec.confidence)
     await state.update_data(draft=asdict(draft), barcodes=[b for p in batch for b in p.barcodes], status_msg=None)
     await state.set_state(Add.confirm)
-    await call.message.edit_text(ui.card_text(draft), reply_markup=ui.card_kb(draft))
+    await edit(ui.card_text(draft), ui.card_kb(draft))
+
+
+@router.callback_query(Add.photos, F.data == ui.RECOGNIZE)
+async def recognize(call: CallbackQuery, state: FSMContext, user, it, catalog, recognizer, photos, store):
+    """Повтор после неудачного распознавания."""
+    uid = call.from_user.id
+    batch = photos.get(uid)
+    if not batch:
+        return await call.answer("Сначала пришлите фото", show_alert=True)
+    await call.answer()
+    photos.cancel(uid)
+
+    async def edit(text, markup=None):
+        await call.message.edit_text(text, reply_markup=markup)
+
+    await run_recognition(uid, edit, state, user, it, catalog, recognizer, batch, store)
 
 
 @router.callback_query(Add.confirm, F.data == ui.SAVE)
-async def save(call: CallbackQuery, state: FSMContext, user, it, catalog, numbering, photos, store, labels):
+async def save(call: CallbackQuery, state: FSMContext, user, it, catalog, numbering, photos, store, labels, cfg,
+               bot: Bot):
     draft, _ = await draft_of(state)
+    await state.set_state(Add.saving)  # до первого await к сети: второе нажатие уже не попадёт в этот обработчик
     await call.answer()
     await call.message.edit_reply_markup(reply_markup=None)
     batch = photos.get(call.from_user.id)
     try:
         result = await service.save(it, catalog, numbering, draft, batch, user.username)
     except ValueError as e:
+        await state.set_state(Add.confirm)
         store.log_event(call.from_user.id, user.username, "save_failed", model=draft.name, error=str(e))
         return await call.message.answer(f"Не сохранено: {ui.esc(e)}", reply_markup=ui.card_kb(draft))
+    except Exception:
+        await state.set_state(Add.confirm)
+        raise
+    await state.set_state(Add.photos)
 
     log.info("сохранено %s: %s в %s", result.number, result.part_name, draft.location_label)
     store.log_event(call.from_user.id, user.username, "saved", number=result.number, model=result.part_name,
-                    serial=draft.serial, place=draft.location_label, new_model=result.created_part or None)
+                    serial=draft.serial, place=draft.location_label, new_model=result.created_part or None,
+                    duplicate_of=draft.duplicate or None)
     filename, label = await labels.make(it, result.stock_pk, result.number, result.part_name, draft.location_label)
-    caption = (f"✅ <b>{result.number}</b> — {ui.esc(result.part_name)}\n{ui.esc(draft.location_label)}\n"
-               f"{it.web_url('stock/item', result.stock_pk)}")
+    item_url = it.web_url("stock/item", result.stock_pk)
+    caption = f"✅ <b>{result.number}</b> — {ui.esc(result.part_name)}\n{ui.esc(draft.location_label)}\n{item_url}"
     if result.warnings:
         caption += "\n\n⚠️ " + "\n⚠️ ".join(ui.esc(w) for w in result.warnings)
-    await call.message.answer_document(BufferedInputFile(label, filename), caption=caption,
-                                       reply_markup=ui.buttons(("✏️ Изменить", ui.Item(action="open", pk=result.stock_pk))))
+    rows = ui.print_buttons(cfg.print_url, result.number, result.part_name, draft.location_label, item_url)
+    sent = await call.message.answer_document(BufferedInputFile(label, filename), caption=caption, reply_markup=ui.buttons(
+        *rows, ("✏️ Изменить", ui.Item(action="open", pk=result.stock_pk)), *share.share_buttons(cfg, store, user)))
+    await share.after_label(bot, cfg, store, user, sent)
 
     photos.clear(call.from_user.id)
     await state.set_state(Add.photos)
     await state.update_data(draft=None, status_msg=None)
     await call.message.answer("Следующий прибор? Присылайте фото.",
                               reply_markup=ui.buttons(("📍 Сменить место", ui.CHANGE_PLACE)))
+
+
+@router.callback_query(Add.confirm, F.data == ui.ADD_DUPLICATE)
+async def save_duplicate(call: CallbackQuery, state: FSMContext, user, it, catalog, numbering, photos, store, labels,
+                         cfg, bot: Bot):
+    """S/N уже есть в InvenTree, но это другой прибор: сохраняем ещё одной единицей со своим номером."""
+    draft, _ = await draft_of(state)
+    draft.allow_duplicate = True
+    await state.update_data(draft=asdict(draft))
+    await save(call, state, user, it, catalog, numbering, photos, store, labels, cfg, bot)
 
 
 @router.callback_query(Add.confirm, F.data == ui.DROP)

@@ -1,6 +1,6 @@
 # p2ptd-inventory
 
-P2P Tech equipment inventory in InvenTree (https://p2ptd-inventory.online): import scripts, a Telegram bot for adding gear from photos (`bot/`), a nightly manual/photo scraper (`scraper/`), and an Android app build. Docs are in Russian in `docs/`. Write new docs, comments and bot messages in Russian too.
+P2P Tech equipment inventory in InvenTree (https://p2ptd-inventory.online): import scripts, a Telegram bot for adding gear from photos (`bot/`), a NIIMBOT label print page (`print/`), a nightly manual/photo scraper (`scraper/`), and an Android app build. Docs are in Russian in `docs/`. Write new docs, comments and bot messages in Russian too.
 
 ## Run and test
 

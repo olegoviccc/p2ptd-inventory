@@ -1,6 +1,7 @@
 """Кнопки и тексты бота."""
 
 import html
+from urllib.parse import urlencode
 
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
@@ -56,8 +57,9 @@ class Scr(CallbackData, prefix="sc"):
     key: str = ""
 
 
-RECOGNIZE, SAVE, EDIT, CATEGORY, DROP, CHANGE_PLACE, CANCEL, LOGOUT = (
-    "recognize", "save", "edit", "category", "drop", "change_place", "cancel", "logout")
+RECOGNIZE, SAVE, EDIT, CATEGORY, DROP, CHANGE_PLACE, CANCEL, LOGOUT, ADD_DUPLICATE = (
+    "recognize", "save", "edit", "category", "drop", "change_place", "cancel", "logout", "add_duplicate")
+SHARE_SEND, SHARE_ALWAYS, SHARE_OFF = "share:send", "share:always", "share:off"
 LOG_FILE = "logfile:"  # + имя файла лога: прислать его целиком
 
 STATUS_NAMES = {10: "OK", 50: "Требует внимания", 55: "Повреждено", 60: "Уничтожено",
@@ -72,7 +74,17 @@ def esc(text):
 
 
 def _button(text, data):
+    if isinstance(data, str) and data.startswith("https://"):
+        return InlineKeyboardButton(text=text, url=data)
     return InlineKeyboardButton(text=text, callback_data=data.pack() if isinstance(data, CallbackData) else data)
+
+
+def print_buttons(print_url, number, model, place, item_url):
+    """Ряд с кнопкой печати на NIIMBOT D110 (страница print/index.html), если она настроена (BOT_PRINT_URL)."""
+    if not print_url:
+        return ()
+    link = print_url + "?" + urlencode({"n": number, "m": model, "p": place, "u": item_url})
+    return (("🖨 Печать на Niimbot", link),)
 
 
 def buttons(*rows):
@@ -90,7 +102,12 @@ def cancel_kb():
 
 
 def photos_kb(count):
-    return buttons((f"🔍 Распознать ({count} фото)", RECOGNIZE), ("📍 Сменить место", CHANGE_PLACE))
+    """После неудачного распознавания: повторить с теми же фото."""
+    return buttons((f"🔁 Распознать ещё раз ({count} фото)", RECOGNIZE), ("📍 Сменить место", CHANGE_PLACE))
+
+
+def photos_wait_kb():
+    return buttons(("📍 Сменить место", CHANGE_PLACE))
 
 
 def venues_kb(locations, last_pk=None, last_label=""):
@@ -122,6 +139,8 @@ def card_kb(draft):
     rows = []
     if draft.can_save:
         rows.append(("✅ Сохранить", SAVE))
+    elif draft.duplicate and draft.model and (draft.part_pk or draft.category_pk):
+        rows.append(("➕ Добавить ещё одну единицу", ADD_DUPLICATE))
     rows.append([("✏️ Исправить", EDIT), ("🗂 Категория", CATEGORY)] if not draft.part_pk else ("✏️ Исправить", EDIT))
     rows.append(("✖️ Отмена", DROP))
     return buttons(*rows)
@@ -201,8 +220,15 @@ def card_text(d):
               "В каталоге: есть" if d.part_pk else "В каталоге: нет, модель будет создана"]
     if d.rider_stock_pk:
         lines.append(f"Из райдера: здесь {d.rider_qty:g} шт. не проверено, одна будет сверена")
+    if not d.model:
+        lines.append("\n⚠️ Модель не распознана, без неё сохранить нельзя. Нажмите «✏️ Исправить» и впишите модель "
+                     "(код с шильдика, а если его нет — короткое название прибора).")
+    elif not (d.part_pk or d.category_pk):
+        lines.append("\n⚠️ Новая модель: выберите категорию («🗂 Категория»), после этого появится «Сохранить».")
     if d.duplicate:
-        lines.append(f"\n⛔ Прибор с этим S/N уже заведён: <b>{esc(d.duplicate)}</b>")
+        lines.append(f"\n⚠️ Прибор с этим S/N уже заведён: <b>{esc(d.duplicate)}</b>")
+        lines.append("Будет добавлена ещё одна единица со своим внутренним номером." if d.allow_duplicate
+                     else "Если это другой прибор с тем же заводским S/N, добавьте его ещё одной единицей.")
     if d.confidence:
         lines.append(f"\nУверенность: {CONFIDENCE.get(d.confidence, d.confidence)}")
     if d.notes:

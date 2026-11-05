@@ -14,6 +14,7 @@ class User:
     token: str
     location_pk: int | None
     location_label: str
+    share_labels: bool = False  # каждую новую этикетку сразу отправлять получателю (BOT_LABEL_RECIPIENT)
 
 
 @dataclass
@@ -47,14 +48,28 @@ class Storage:
             );
             CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
         """)
+        columns = {r[1] for r in self.db.execute("PRAGMA table_info(users)")}
+        if "share_labels" not in columns:
+            with self.db:
+                self.db.execute("ALTER TABLE users ADD COLUMN share_labels INTEGER NOT NULL DEFAULT 0")
 
     # --- пользователи
 
     def get(self, tg_id):
         row = self.db.execute(
-            "SELECT tg_id, username, token, location_pk, location_label FROM users WHERE tg_id = ?", (tg_id,)
+            "SELECT tg_id, username, token, location_pk, location_label, share_labels FROM users WHERE tg_id = ?",
+            (tg_id,)
         ).fetchone()
-        return User(*row) if row else None
+        return User(*row[:5], share_labels=bool(row[5])) if row else None
+
+    def tg_id_of(self, username):
+        """Telegram ID пользователя InvenTree, который входил в бота; None, если не входил."""
+        row = self.db.execute("SELECT tg_id FROM users WHERE lower(username) = lower(?)", (username,)).fetchone()
+        return row[0] if row else None
+
+    def set_share_labels(self, tg_id, on):
+        with self.db:
+            self.db.execute("UPDATE users SET share_labels = ? WHERE tg_id = ?", (int(on), tg_id))
 
     def save(self, tg_id, username, token):
         with self.db:

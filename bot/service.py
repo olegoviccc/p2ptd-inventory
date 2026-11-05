@@ -44,6 +44,7 @@ class Draft:
     rider_stock_pk: int | None = None
     rider_qty: float = 0
     duplicate: str = ""  # номер уже заведённой позиции с тем же заводским S/N
+    allow_duplicate: bool = False  # «добавить ещё одну единицу»: заводские S/N у приборов бывают одинаковыми
     overview_photo: int = -1
     confidence: str = ""
     notes: str = ""
@@ -54,7 +55,7 @@ class Draft:
 
     @property
     def can_save(self):
-        return bool(self.model) and not self.duplicate and bool(self.part_pk or self.category_pk)
+        return bool(self.model) and (not self.duplicate or self.allow_duplicate) and bool(self.part_pk or self.category_pk)
 
 
 @dataclass
@@ -98,7 +99,7 @@ async def refresh(it, catalog, draft, barcodes=()):
         draft.category_pk = match.part["category"]
         draft.category_label = catalog.category_paths.get(draft.category_pk, "")
 
-    draft.rider_stock_pk, draft.rider_qty, draft.duplicate = None, 0, ""
+    draft.rider_stock_pk, draft.rider_qty, draft.duplicate, draft.allow_duplicate = None, 0, "", False
     if draft.part_pk:
         unverified, same = await asyncio.gather(
             it.unverified_stock(draft.part_pk, draft.location_pk),
@@ -140,7 +141,7 @@ async def _assign_number(it, numbering, stock_pk, batch):
 
 async def save(it, catalog, numbering, draft, photos, author):
     """Позиция с внутренним номером + списание 1 шт. из райдера + фото."""
-    if draft.duplicate:
+    if draft.duplicate and not draft.allow_duplicate:
         raise ValueError(f"этот серийник уже заведён: {draft.duplicate}")
 
     created = False
@@ -155,6 +156,8 @@ async def save(it, catalog, numbering, draft, photos, author):
     await it.ensure_trackable(part)
 
     notes = f"Добавлено через Telegram-бота: {author}."
+    if draft.duplicate:
+        notes += f"\nЗаводской S/N совпадает с уже заведённым: {draft.duplicate}."
     if draft.notes:
         notes += f"\n\nРаспознавание: {draft.notes}"
 
