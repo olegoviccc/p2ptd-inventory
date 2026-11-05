@@ -29,6 +29,10 @@ class Config:
     local_llm_timeout: float
     local_llm_think: object  # None, True/False или "low"/"medium"/"high"
     local_llm_source: str    # откуда взяты настройки своей модели (для лога)
+    deepseek_key: str
+    deepseek_url: str
+    deepseek_model: str
+    deepseek_thinking: bool
     serial_prefix: str
     serial_digits: int
     label_template: str  # имя шаблона этикетки в InvenTree; пусто — этикетку рисует бот
@@ -44,9 +48,9 @@ def load():
     load_env()
     env = os.environ.get
     recognizers = tuple(x.strip() for x in env("BOT_RECOGNIZER", "claude").split(",") if x.strip())
-    unknown = set(recognizers) - {"claude", "local", "olegovic"}
+    unknown = set(recognizers) - {"claude", "local", "olegovic", "deepseek"}
     if unknown or not recognizers or {"local", "olegovic"} <= set(recognizers):
-        raise SystemExit("BOT_RECOGNIZER: допустимо claude, olegovic, local или цепочка вроде olegovic,claude "
+        raise SystemExit("BOT_RECOGNIZER: допустимо claude, deepseek, olegovic, local или цепочка вроде olegovic,claude "
                          f"(сейчас {recognizers})")
 
     # olegovic = своя модель, настройки которой берутся из config.toml olegovic-llm на этом ПК
@@ -63,6 +67,8 @@ def load():
     required = ["TELEGRAM_BOT_TOKEN", "INVENTREE_URL"]
     if "claude" in recognizers:
         required.append("ANTHROPIC_API_KEY")
+    if "deepseek" in recognizers:
+        required.append("DEEPSEEK_API_KEY")
     missing = [k for k in required if not env(k)]
     if "local" in recognizers and not (local_url and local_model):
         missing += ["LOCAL_LLM_URL", "LOCAL_LLM_MODEL"]
@@ -87,6 +93,10 @@ def load():
         local_llm_timeout=float(env("LOCAL_LLM_TIMEOUT", "300")),
         local_llm_think=local_think,
         local_llm_source=source,
+        deepseek_key=env("DEEPSEEK_API_KEY", ""),
+        deepseek_url=env("DEEPSEEK_URL", "https://api.deepseek.com").rstrip("/"),
+        deepseek_model=env("DEEPSEEK_MODEL", "deepseek-flash"),
+        deepseek_thinking=env("DEEPSEEK_THINKING", "").strip().lower() in ("1", "true", "yes"),
         serial_prefix=env("BOT_SERIAL_PREFIX", "P2PTD"),
         serial_digits=int(env("BOT_SERIAL_DIGITS", "4")),
         label_template=env("BOT_LABEL_TEMPLATE", "P2PTD 62x29"),

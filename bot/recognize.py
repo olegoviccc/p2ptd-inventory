@@ -4,6 +4,7 @@
 * ClaudeRecognizer — Claude API (vision + structured outputs);
 * LocalRecognizer — своя модель с OpenAI-совместимым API (Ollama, LM Studio,
   llama.cpp server, vLLM). Модель должна уметь работать с изображениями;
+* DeepSeekRecognizer — облачный DeepSeek (дешёвый, OpenAI-совместимый, режим json_object);
 * ChainRecognizer — пробует движки по очереди (например, сначала локальный,
   при ошибке или недоступности — Claude).
 """
@@ -177,6 +178,16 @@ class LocalRecognizer:
         except LLMError as e:
             raise RecognitionError(f"local: {e}") from e
         return finalize(text, len(photos), categories, self.name, started)
+
+
+class DeepSeekRecognizer(LocalRecognizer):
+    """DeepSeek API: тот же запрос, что к своей модели, но JSON-режим вместо json_schema и без размышлений."""
+
+    name = "deepseek"
+
+    def __init__(self, base_url, model, api_key, timeout=60, thinking=False):
+        self.llm = LocalLLM(base_url, model, api_key, timeout, json_object=True,
+                            extra={"thinking": {"type": "enabled" if thinking else "disabled"}})
 
 
 class ChainRecognizer:

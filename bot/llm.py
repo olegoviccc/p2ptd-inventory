@@ -39,8 +39,10 @@ def image_part(jpeg):
 
 
 class LocalLLM:
-    def __init__(self, base_url, model, api_key="", timeout=300, think=None):
+    def __init__(self, base_url, model, api_key="", timeout=300, think=None, json_object=False, extra=None):
         self.base = base_url.rstrip("/")
+        self.json_object = json_object  # облачные API без json_schema (DeepSeek): схема уходит в текст запроса
+        self.extra = extra or {}
         self.url = self.base + "/chat/completions"
         self.model = model
         self.think = think
@@ -82,7 +84,14 @@ class LocalLLM:
             # strict=False — как в olegovic-llm: llama-server и Ollama держат схему грамматикой
             "response_format": {"type": "json_schema", "json_schema": {"name": name, "strict": False, "schema": schema}},
         }
-        if self.think is None or isinstance(self.think, bool):
+        if self.json_object:
+            body["response_format"] = {"type": "json_object"}
+            body["messages"] = [{"role": "user", "content": [
+                *content, {"type": "text", "text": "Reply with one JSON object matching this JSON schema:\n"
+                                                   + json.dumps(schema, ensure_ascii=False)}]}]
+        if self.extra:
+            body.update(self.extra)
+        elif self.think is None or isinstance(self.think, bool):
             # Qwen-шаблоны: для коротких проверок размышления не нужны, без них быстрее и JSON не обрывается.
             # Шаблоны без этой переменной её просто игнорируют.
             body["chat_template_kwargs"] = {"enable_thinking": bool(self.think)}

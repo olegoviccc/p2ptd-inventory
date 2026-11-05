@@ -16,7 +16,7 @@ from .labels import Labels
 from .middlewares import Context
 from .numbering import Numbering
 from .photos import PhotoBuffer
-from .recognize import ChainRecognizer, ClaudeRecognizer, LocalRecognizer
+from .recognize import ChainRecognizer, ClaudeRecognizer, DeepSeekRecognizer, LocalRecognizer
 from .storage import Storage
 
 log = logging.getLogger("bot")
@@ -51,6 +51,9 @@ def build_recognizer(cfg):
     for name in cfg.recognizers:
         if name == "claude":
             engines.append(ClaudeRecognizer(cfg.claude_model, cfg.claude_effort))
+        elif name == "deepseek":
+            engines.append(DeepSeekRecognizer(cfg.deepseek_url, cfg.deepseek_model, cfg.deepseek_key,
+                                              thinking=cfg.deepseek_thinking))
         else:
             engines.append(LocalRecognizer(cfg.local_llm_url, cfg.local_llm_model, cfg.local_llm_key,
                                            cfg.local_llm_timeout, cfg.local_llm_think))
