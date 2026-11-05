@@ -438,6 +438,9 @@ def test_qr_formats():
     assert images.stockitem_from_qr("INV-SI42") == 42      # короткий формат InvenTree (по умолчанию)
     assert images.stockitem_from_qr("SI7") == 7
     assert images.stockitem_from_qr('{"stockitem": 5}') == 5  # JSON, как раньше рисовал бот
+    assert images.stockitem_from_qr("https://p2ptd-inventory.online/web/stock/item/42") == 42  # ссылка с этикетки
+    assert images.stockitem_from_qr("https://p2ptd-inventory.online/web/stock/item/42/details") == 42
+    assert images.stockitem_from_qr("https://p2ptd-inventory.online/web/part/42") is None
     assert images.stockitem_from_qr("INV-SL3") is None       # это место, а не позиция
     assert images.stockitem_from_qr("P2PTD0008") is None
 

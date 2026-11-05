@@ -207,7 +207,9 @@ class InvenTree:
     # --- этикетки (шаблоны и печать InvenTree)
 
     async def label_templates(self, model_type="stockitem"):
-        return await self.get_all("/api/label/template/", model_type=model_type, enabled="true")
+        # фильтр model_type на сервере InvenTree 1.5 отвечает 400 на любое значение — отбираем здесь
+        templates = await self.get_all("/api/label/template/", enabled="true")
+        return [t for t in templates if t.get("model_type") == model_type]
 
     async def print_label(self, template_pk, items):
         """Запускает отрисовку этикеток; возвращает DataOutput (результат готов, когда complete)."""

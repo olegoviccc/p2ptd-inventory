@@ -34,9 +34,13 @@ def read_barcodes(data):
 SHORT_STOCKITEM = re.compile(r"^(?:[A-Za-z0-9]+-)?SI(\d+)$")
 
 
+WEB_STOCKITEM = re.compile(r"^https?://[^/\s]+/web/stock/item/(\d+)(?:[/?#]|$)")
+
+
 def stockitem_from_qr(text):
-    """pk позиции из QR InvenTree: короткий формат INV-SI42 (по умолчанию в InvenTree) или JSON {"stockitem": 42}."""
-    m = SHORT_STOCKITEM.match((text or "").strip())
+    """pk позиции из QR: ссылка на сайт .../web/stock/item/42 (так печатает бот), короткий формат InvenTree
+    INV-SI42 или JSON {"stockitem": 42} (старые этикетки бота)."""
+    m = WEB_STOCKITEM.match((text or "").strip()) or SHORT_STOCKITEM.match((text or "").strip())
     if m:
         return int(m.group(1))
     try:
@@ -92,25 +96,32 @@ def _wrap(draw, text, font, max_width):
     return lines
 
 
-def label_png(stock_pk, number, title, subtitle=""):
-    """Этикетка 62×29 мм при 300 dpi: QR позиции InvenTree + номер и модель.
+def label_png(stock_pk, number, title, subtitle="", url=None):
+    """Этикетка 62×29 мм при 300 dpi: QR со ссылкой на позицию на сайте (url) + номер и модель.
 
     Номер и подпись уменьшаются, пока не влезут: ничего не обрезается.
     """
     w, h, pad = 732, 342, 28  # справа запас: принтеры часто не печатают край
     img = Image.new("RGB", (w, h), "white")
-    qr = qrcode.make(json.dumps({"stockitem": stock_pk}), border=1, box_size=10)
+    qr = qrcode.make(url or json.dumps({"stockitem": stock_pk}), border=1, box_size=10)
     img.paste(qr.resize((h - 20, h - 20)).convert("RGB"), (10, 10))
 
     draw = ImageDraw.Draw(img)
     x = h + 4
     max_width = w - x - pad
     draw.text((x, 30), number, font=_fit(draw, number, max_width, 64), fill="black")
-    title_font = _font(32)
+    title_font = _font(42)
     for i, line in enumerate(_wrap(draw, title, title_font, max_width)[:3]):
-        draw.text((x, 120 + i * 42), line, font=title_font, fill="black")
+        draw.text((x, 104 + i * 50), line, font=title_font, fill="black")
     if subtitle:
-        draw.text((x, h - 48), subtitle, font=_fit(draw, subtitle, max_width, 26, 14), fill="black")
+        for size in (36, 30, 26):  # крупно, а длинное место переносится на вторую строку
+            place_font = _font(size)
+            place = _wrap(draw, subtitle, place_font, max_width)
+            if len(place) <= 2:
+                break
+        place = place[:2]
+        for i, line in enumerate(place):
+            draw.text((x, h - 22 - (len(place) - i) * (size + 6)), line, font=place_font, fill="black")
 
     out = io.BytesIO()
     img.save(out, "PNG", dpi=(300, 300))

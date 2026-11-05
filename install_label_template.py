@@ -43,7 +43,7 @@ def main():
         sys.exit(f"Пользователь {me.get('username')} не staff: шаблоны этикеток в InvenTree меняют только "
                  "сотрудники со статусом staff. Запустите скрипт с токеном администратора.")
 
-    existing = next((t for t in client.get_all(API, model_type="stockitem") if t["name"] == args.name), None)
+    existing = next((t for t in client.get_all(API) if t["name"] == args.name and t.get("model_type") == "stockitem"), None)
     fields = {
         "name": args.name,
         "description": "Этикетка P2PTD: QR, внутренний номер, модель, место",

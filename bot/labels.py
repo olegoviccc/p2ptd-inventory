@@ -57,5 +57,6 @@ class Labels:
             except (LabelError, InvenTreeError) as e:
                 self._template_pk = None  # шаблон могли переименовать — в следующий раз ищем заново
                 log.warning("этикетка из InvenTree не получилась, рисую сама: %s", e)
-        png = await asyncio.to_thread(images.label_png, stock_pk, number, title, subtitle)
+        png = await asyncio.to_thread(images.label_png, stock_pk, number, title, subtitle,
+                                     it.web_url("stock/item", stock_pk))
         return f"{number}.png", png
