@@ -141,6 +141,10 @@
 * Каждый входит своим аккаунтом InvenTree («🔑 Войти» → логин → пароль). Бот сразу удаляет сообщение с паролем и хранит только личный токен, поэтому в истории InvenTree видно, кто что сделал.
 * Группе нужны права: Parts (View, Add, Change), Part Categories (View), Stock Items (View, Add, Change), Stock Locations (View), Purchase Orders (View, Add). Для удаления ошибочных позиций — ещё Stock Items: Delete. При входе бот сам скажет, чего не хватает.
 * `BOT_ALLOWED_TELEGRAM_IDS` — белый список. Если он пуст, бот отвечает всем, но без входа ничего не делает.
+  Если задан, новый человек при первом сообщении получает «запрос отправлен администратору», а каждому из
+  `BOT_ADMIN_IDS` приходит его имя, @username и ID с кнопками «✅ Пустить» / «⛔ Отклонить». Решение хранится
+  в `bot_data/bot.sqlite3` (таблица `access`), правка `.env` и перезапуск не нужны. Под решением остаётся кнопка,
+  чтобы передумать: «🚫 Закрыть доступ» (заодно выходит из InvenTree) или «✅ Всё-таки пустить». Отклонённым бот молчит.
 
 ## Устройство кода
 
@@ -150,8 +154,8 @@ bot/
   config.py        настройки из .env
   logs.py          технический лог (консоль + файл, ID пользователя в каждой строке)
   diagnostics.py   «🐞 Диагностика»: файл с настройками, проверками и хвостами логов без секретов
-  middlewares.py   белый список, пользователь и клиент InvenTree для обработчиков, лог событий, проверка входа
-  handlers/        common (меню, профиль, журнал, ошибки), auth (вход), add (добавление), lookup (поиск)
+  middlewares.py   белый список и запросы доступа, пользователь и клиент InvenTree для обработчиков, лог событий, проверка входа
+  handlers/        access (запросы доступа, кнопки администратора), common (меню, профиль, журнал, ошибки), auth (вход), add (добавление), lookup (поиск)
   ui.py            кнопки и тексты
   service.py       логика без Telegram: распознать → черновик → сохранить
   inventree.py     клиент InvenTree (aiohttp, общий пул соединений) и кэш каталога
@@ -190,8 +194,8 @@ tests/             поддельный InvenTree и Telegram, сквозной 
 1. Создайте **отдельного** бота у @BotFather (у olegovic свой бот, токены не смешиваем).
 2. Установите бота:
    ```
-   git clone https://github.com/olegoviccc/p2ptd-inventory ~/code/p2ptd-inventory
-   cd ~/code/p2ptd-inventory
+   git clone https://github.com/olegoviccc/p2ptd-inventory ~/code/p2p/p2ptd-inventory
+   cd ~/code/p2p/p2ptd-inventory
    python -m venv .venv && .venv/bin/pip install -r bot/requirements.txt
    cp .env.example .env    # впишите TELEGRAM_BOT_TOKEN, INVENTREE_URL, BOT_ADMIN_IDS; BOT_RECOGNIZER=olegovic
    ```
@@ -201,7 +205,7 @@ tests/             поддельный InvenTree и Telegram, сквозной 
    cp systemd/p2ptd-bot.service ~/.config/systemd/user/
    systemctl --user daemon-reload
    systemctl --user enable --now p2ptd-bot
-   journalctl --user -u p2ptd-bot -f      # лог; он же в ~/code/p2ptd-inventory/bot_data/logs/bot.log
+   journalctl --user -u p2ptd-bot -f      # лог; он же в ~/code/p2p/p2ptd-inventory/bot_data/logs/bot.log
    ```
 5. В Telegram: «🔑 Войти» → «➕ Добавить прибор».
 

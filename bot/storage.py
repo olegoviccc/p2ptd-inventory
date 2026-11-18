@@ -47,6 +47,12 @@ class Storage:
                 details TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
+            CREATE TABLE IF NOT EXISTS access (
+                tg_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,  -- pending / approved / denied
+                ts TEXT NOT NULL
+            );
         """)
         columns = {r[1] for r in self.db.execute("PRAGMA table_info(users)")}
         if "share_labels" not in columns:
@@ -87,6 +93,27 @@ class Storage:
     def delete(self, tg_id):
         with self.db:
             self.db.execute("DELETE FROM users WHERE tg_id = ?", (tg_id,))
+
+    # --- доступ (кого администратор пустил кнопкой в боте, сверх BOT_ALLOWED_TELEGRAM_IDS)
+
+    def access(self, tg_id):
+        """pending / approved / denied или None, если человек ещё не писал боту."""
+        row = self.db.execute("SELECT status FROM access WHERE tg_id = ?", (tg_id,)).fetchone()
+        return row[0] if row else None
+
+    def access_name(self, tg_id):
+        row = self.db.execute("SELECT name FROM access WHERE tg_id = ?", (tg_id,)).fetchone()
+        return row[0] if row else str(tg_id)
+
+    def set_access(self, tg_id, status, name=None):
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self.db:
+            self.db.execute(
+                "INSERT INTO access (tg_id, name, status, ts) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(tg_id) DO UPDATE SET status = excluded.status, ts = excluded.ts, "
+                "name = CASE WHEN ? IS NULL THEN access.name ELSE excluded.name END",
+                (tg_id, name or str(tg_id), status, ts, name),
+            )
 
     # --- журнал действий
 

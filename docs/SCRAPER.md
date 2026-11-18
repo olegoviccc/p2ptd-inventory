@@ -95,7 +95,7 @@
 ## Запуск
 
 ```
-cd ~/code/p2ptd-inventory
+cd ~/code/p2p/p2ptd-inventory
 .venv/bin/pip install -r scraper/requirements.txt
 .venv/bin/python -m scraper --stats          # сколько моделей без фото и без мануала
 .venv/bin/python -m scraper --dry-run --limit 3   # найти для трёх моделей, ничего не записывать

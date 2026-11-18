@@ -26,7 +26,7 @@ def describe(event, raw_state):
 
 
 class Context(BaseMiddleware):
-    """Внешний: проверяет белый список, кладёт user и it (клиент InvenTree) в обработчик, пишет лог."""
+    """Внешний: проверяет доступ (новичков отправляет на одобрение администратору), кладёт user и it (клиент InvenTree) в обработчик, пишет лог."""
 
     async def __call__(self, handler, event, data):
         tg_user = data.get("event_from_user")
@@ -35,8 +35,13 @@ class Context(BaseMiddleware):
             return await handler(event, data)
         token = logs.current_user.set(str(tg_user.id))
         try:
-            if cfg.allowed_ids and tg_user.id not in cfg.allowed_ids:
-                log.info("отклонён: нет в белом списке")
+            from .handlers import access  # здесь, а не наверху: handlers импортирует этот модуль
+            if not access.allowed(cfg, data["store"], tg_user.id):
+                reply = await access.request(data["bot"], cfg, data["store"], tg_user)
+                if reply and isinstance(event, Message):
+                    await event.answer(reply)
+                elif reply and isinstance(event, CallbackQuery):
+                    await event.answer(reply, show_alert=True)
                 return None
             user = data["store"].get(tg_user.id)
             data["user"] = user

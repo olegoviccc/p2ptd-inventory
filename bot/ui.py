@@ -256,7 +256,8 @@ EVENT_NAMES = {"login": "вошёл", "logout": "вышел", "recognized": "р�
                "save_failed": "не смог сохранить", "recognize_failed": "не распознал", "lookup": "искал",
                "moved": "переместил", "status": "сменил статус", "batch": "исправил S/N", "note": "добавил заметку",
                "photo": "добавил фото", "deleted": "удалил", "error": "ошибка",
-               "manual_added": "нашёл мануал", "image_added": "нашёл фото модели"}
+               "manual_added": "нашёл мануал", "image_added": "нашёл фото модели",
+               "access_granted": "пустил в бота", "access_denied": "закрыл доступ"}
 
 
 def journal_text(events):
@@ -321,3 +322,11 @@ def review_caption(r):
 def review_kb(review_id):
     return buttons([("✅ Принять", Scr(action="acc", value=review_id)), ("❌ Отклонить", Scr(action="rej", value=review_id))],
                    ("⬅️ К каталогу", Scr(action="home")))
+
+
+# --- доступ: кнопки администратору под запросом нового пользователя
+ACCESS_OK, ACCESS_NO = "access:ok:", "access:no:"  # + Telegram ID
+
+
+def access_request_kb(tg_id):
+    return buttons([("✅ Пустить", f"{ACCESS_OK}{tg_id}"), ("⛔ Отклонить", f"{ACCESS_NO}{tg_id}")])

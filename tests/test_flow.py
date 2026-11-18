@@ -77,15 +77,15 @@ class StaticRecognizer:
                            confidence="high", notes="", engine="static")
 
 
-def message(text=None, photo=None):
+def message(text=None, photo=None, user=USER):
     return Update(update_id=next(ids), message=Message(
-        message_id=next(ids), date=datetime.now(), chat=CHAT, from_user=USER, text=text,
+        message_id=next(ids), date=datetime.now(), chat=Chat(id=user.id, type="private"), from_user=user, text=text,
         photo=[PhotoSize(file_id=photo, file_unique_id=photo, width=100, height=100)] if photo else None))
 
 
-def press(data):
+def press(data, user=USER):
     return Update(update_id=next(ids), callback_query=CallbackQuery(
-        id=str(next(ids)), from_user=USER, chat_instance="ci", data=data,
+        id=str(next(ids)), from_user=user, chat_instance="ci", data=data,
         message=Message(message_id=next(ids), date=datetime.now(), chat=CHAT, text="…")))
 
 
@@ -95,7 +95,7 @@ def qr_png(payload):
     return out.getvalue()
 
 
-def environment(tmp_path):
+def environment(tmp_path, allowed=frozenset()):
     """Бот с поддельными Telegram и InvenTree: (server, tg, store, api, send)."""
     server = FakeInvenTree()
     seed(server)
@@ -103,7 +103,7 @@ def environment(tmp_path):
     bot = Bot("123:TEST", session=tg)
     api = Api(server.url)
     store = Storage(tmp_path / "bot.sqlite3")
-    cfg = SimpleNamespace(allowed_ids=frozenset(), admin_ids=frozenset({ADMIN}), inventree_url=server.url,
+    cfg = SimpleNamespace(allowed_ids=frozenset(allowed), admin_ids=frozenset({ADMIN}), inventree_url=server.url,
                           print_url="https://print.example/", label_recipient="")
     dp = Dispatcher(storage=MemoryStorage(), cfg=cfg, api=api, store=store, catalog=Catalog(),
                     numbering=Numbering(), recognizer=StaticRecognizer(), photos=PhotoBuffer(),
@@ -251,3 +251,47 @@ async def editing(tmp_path):
 
 def test_item_editing(tmp_path):
     asyncio.run(editing(tmp_path))
+
+
+async def access_scenario(tmp_path):
+    logs.setup(tmp_path, "INFO")
+    server, tg, store, api, send = environment(tmp_path, allowed={ADMIN})
+    stranger = User(id=777, is_bot=False, first_name="Pansy", username="pansyprep")
+    try:
+        # незнакомец пишет → ему ответ, администратору запрос с кнопками
+        await send(message("/start", user=stranger))
+        assert "Отправил запрос администратору" in tg.texts()[-1]
+        request = [t for t in tg.texts() if "Просит доступ" in t]
+        assert len(request) == 1 and "@pansyprep" in request[0] and "777" in request[0]
+        assert store.access(777) == "pending"
+
+        # повторное сообщение — без второго запроса
+        await send(message("привет", user=stranger))
+        assert "ещё у администратора" in tg.texts()[-1]
+        assert sum("Просит доступ" in t for t in tg.texts()) == 1
+
+        # чужая кнопка не работает
+        await send(press(f"{ui.ACCESS_OK}777", user=stranger))
+        assert store.access(777) == "pending"
+
+        # администратор пускает → человеку сообщение, бот отвечает ему как обычно
+        await send(press(f"{ui.ACCESS_OK}777"))
+        assert store.access(777) == "approved"
+        assert any("открыл доступ" in t for t in tg.texts())
+        await send(message("/start", user=stranger))
+        assert "запрос" not in tg.texts()[-1].lower()
+
+        # закрыть доступ → бот молчит
+        await send(press(f"{ui.ACCESS_NO}777"))
+        assert store.access(777) == "denied"
+        before = len(tg.sent)
+        await send(message("/start", user=stranger))
+        assert len(tg.sent) == before
+        assert "access_granted" in {e.action for e in store.recent_events()}
+    finally:
+        await api.close()
+        server.close()
+
+
+def test_access_requests(tmp_path):
+    asyncio.run(access_scenario(tmp_path))
