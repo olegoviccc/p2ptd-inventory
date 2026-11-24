@@ -53,6 +53,14 @@ def test_matching():
     assert best_match("Yamaha", "", PARTS, MPNS) is None
 
 
+def test_matching_keeps_model_numbers():
+    other = {"pk": 1, "name": "Lab.Gruppen CA2401"}
+    expected = {"pk": 2, "name": "Lab Gruppen CA-1201"}
+    assert best_match("Lab.Gruppen", "CA1201", [other], []) is None
+    assert best_match("Lab.Gruppen", "CA1201", [other, expected], []).part == expected
+    assert best_match("Lab.Grupen", "CA1201", [other, expected], []).part == expected
+
+
 # --- фото
 
 

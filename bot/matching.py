@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from rapidfuzz import fuzz
 
 FUZZY_THRESHOLD = 88
+MODEL_NUMBERS = re.compile(r"[0-9]+")
 
 
 def norm(text):
@@ -39,8 +40,13 @@ def best_match(manufacturer, model, parts, mpns):
             return Match(p, 100)
 
     best = None
+    queries = [(query, MODEL_NUMBERS.findall(query)) for query in dict.fromkeys((full, key))]
     for p in parts:
-        score = max(fuzz.ratio(norm(p["name"]), full), fuzz.ratio(norm(p["name"]), key))
+        name = norm(p["name"])
+        numbers = MODEL_NUMBERS.findall(name)
+        # Похожие названия с разными номерами (CA1201 и CA2401) — разные модели.
+        score = max((fuzz.ratio(name, query) for query, query_numbers in queries if numbers == query_numbers),
+                    default=0)
         if score >= FUZZY_THRESHOLD and (best is None or score > best.score):
             best = Match(p, int(score))
     return best
